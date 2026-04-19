@@ -5014,10 +5014,18 @@ function startMission(){
     showBanner("Choose and lock your job first");
     return;
   }
-  if(!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()){
+
+  const wantsTarget = getWantsTargetAmount();
+  const pendingWants = getPendingWantsSelectionTotal();
+  const canAutoCommitWants = (!state.plan.wantsCommitted || state.plan.wants < wantsTarget) && pendingWants >= wantsTarget;
+  if(canAutoCommitWants){
+    addWantExtra();
+  }
+
+  if(!state.plan.wantsCommitted || state.plan.wants < wantsTarget){
     beep("warn");
     openTab("plan");
-    showBanner(`Build wants to at least ${money(getWantsTargetAmount())} first`);
+    showBanner(`Build wants to at least ${money(wantsTarget)} first`);
     updateWantsUI();
     return;
   }
