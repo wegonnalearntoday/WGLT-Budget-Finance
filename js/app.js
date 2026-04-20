@@ -764,20 +764,6 @@ function formatSourceLabel(src){
   return src ? String(src).charAt(0).toUpperCase() + String(src).slice(1) : 'Selected Account';
 }
 
-function parseDollarAmountFromText(textBlob){
-  const txt = String(textBlob || '');
-  const match = txt.match(/\$(\d+(?:\.\d{1,2})?)/);
-  return match ? Number(match[1]) : 0;
-}
-function labelImpliesSpend(textBlob){
-  const txt = String(textBlob || '').toLowerCase();
-  return /\b(buy|pay|cover|help with|chip in|upgrade|fee|cost|repair|replace|purchase|spend|cover it now|buy now)\b/.test(txt);
-}
-function labelImpliesReward(textBlob){
-  const txt = String(textBlob || '').toLowerCase();
-  return /\b(receiv|earned|earn|get paid|get \$|gift|bonus|tip|inheritance|deposit|put money|you receive|you get)\b/.test(txt) || /\+\$\d+/.test(txt);
-}
-
 const AUTO_REFLECTION_BANK = {
   spending: [
     { type: "spending", question: "Was this worth the money?" },
@@ -1435,17 +1421,7 @@ function openScenarioModal(scenario, onDone){
       const resolvedCost = typeof opt.cost === "function" ? opt.cost(job) : opt.cost;
       const inferredFunding = (!resolvedCost || resolvedCost <= 0) ? inferScenarioFunding(opt, job) : null;
       const inferredReward = (!resolvedCost || resolvedCost <= 0) ? inferScenarioReward(opt, job) : null;
-      const labelBlob = `${opt.label || ''} ${opt.hint || ''} ${body || ''}`;
-      const parsedLabelAmount = parseDollarAmountFromText(labelBlob);
-      const labelFunding = (!resolvedCost || resolvedCost <= 0) && !inferredFunding && parsedLabelAmount > 0 && labelImpliesSpend(labelBlob)
-        ? { amount: parsedLabelAmount, originalSource:'pay_chain', inferred:true, fromLabel:true }
-        : null;
-      const labelReward = (!resolvedCost || resolvedCost <= 0) && !inferredReward && parsedLabelAmount > 0 && labelImpliesReward(labelBlob)
-        ? { amount: parsedLabelAmount, originalDest:'checking', inferred:true, fromLabel:true }
-        : null;
-      const paymentInfoResolved = inferredFunding || labelFunding;
-      const rewardInfoResolved = inferredReward || labelReward;
-      const paymentAmount = (resolvedCost && resolvedCost > 0) ? resolvedCost : (paymentInfoResolved ? paymentInfoResolved.amount : 0);
+      const paymentAmount = (resolvedCost && resolvedCost > 0) ? resolvedCost : (inferredFunding ? inferredFunding.amount : 0);
 
       if(paymentAmount && paymentAmount > 0){
         closeModal();
@@ -1456,27 +1432,23 @@ Choose which account to pay from:`, (src)=>{
             let summary;
             if(opt.applyAfterFunding){
               summary = opt.applyAfterFunding(state, job, src);
-            }else if(paymentInfoResolved){
-              summary = runApplyWithFundingOverride(opt.apply, paymentInfoResolved, job);
+            }else if(inferredFunding){
+              summary = runApplyWithFundingOverride(opt.apply, inferredFunding, job);
             }else{
               summary = opt.apply(state, job);
             }
+            showDecisionBadge(`Paid from ${formatSourceLabel(src)}: ${money(paymentAmount)}`);
             finalizeChoice(opt, i, summary, {source:src, amount:paymentAmount});
           });
         }, 50);
-      } else if(rewardInfoResolved && rewardInfoResolved.amount > 0){
+      } else if(inferredReward && inferredReward.amount > 0){
         closeModal();
         setTimeout(()=>{
-          chooseMoneyDestination(rewardInfoResolved.amount, `${opt.label}
+          chooseMoneyDestination(inferredReward.amount, `${opt.label}
 
-You are receiving ${money(rewardInfoResolved.amount)}.`, (dest)=>{
-            let summary;
-            if(rewardInfoResolved && !rewardInfoResolved.fromLabel){
-              summary = runApplyWithRewardOverride(opt.apply, rewardInfoResolved, job);
-            }else{
-              summary = opt.apply(state, job);
-            }
-            finalizeChoice(opt, i, summary, {source:dest, amount:rewardInfoResolved.amount});
+You are receiving ${money(inferredReward.amount)}.`, (dest)=>{
+            const summary = runApplyWithRewardOverride(opt.apply, inferredReward, job);
+            finalizeChoice(opt, i, summary, {source:dest, amount:inferredReward.amount});
           });
         }, 50);
       } else {
@@ -3594,33 +3566,7 @@ if(!state.unlockedJobs) state.unlockedJobs = new Set();
 if(!state.careerProgress) state.careerProgress = {};
 
 /* Coverage tracking */
-function addCoverage(b){
-  const alreadyHad = !!(state.coverage && state.coverage.has && state.coverage.has(b));
-  state.coverage.add(b);
-  if(alreadyHad) return;
-  if(!state.ui) state.ui = {};
-  if(!state.ui.coverageQueue) state.ui.coverageQueue = [];
-  state.ui.coverageQueue.push(b);
-  if(state.ui.coverageModalOpen) return;
-  const pumpCoverageModal = ()=>{
-    if(!state.ui || !state.ui.coverageQueue || !state.ui.coverageQueue.length) return;
-    if(state.ui.coverageModalOpen) return;
-    const nextB = state.ui.coverageQueue.shift();
-    const coveredName = FL_BUCKETS[nextB] || BENCH[nextB] || 'Financial literacy standard';
-    state.ui.coverageModalOpen = true;
-    openModal({
-      title:'Benchmark Covered',
-      meta:`Benchmark #${nextB}`,
-      body:`Great work. You just covered Benchmark #${nextB}.\n\nThis benchmark covers: ${coveredName}.`,
-      buttons:[{id:'ok',label:'Got it',kind:'primary'}],
-      onPick:()=>{
-        state.ui.coverageModalOpen = false;
-        setTimeout(pumpCoverageModal, 60);
-      }
-    });
-  };
-  setTimeout(pumpCoverageModal, 60);
-}
+function addCoverage(b){ state.coverage.add(b); }
 function trackCoverageForAction(action){
   const map = {
     startup_choose:[1,6,12,3],
@@ -3664,10 +3610,10 @@ function getRandomEventButtonId(type){
   if(type === "job") return "btnJobEvent";
   if(type === "life") return "btnSchoolEvent";
   if(type === "financial") return "btnSocialEvent";
+  if(type === "gen_local_tax") return "btnGenLocalTax";
   if(type === "inheritance") return "btnInheritance";
   if(type === "dispute") return "btnDispute";
-  if(type === "tax") return "btnGenLocalTax";
-  return "btnSocialEvent";
+  return "btnRandomEvent";
 }
 function clearRandomEventPending(){
   if(!state.ui) state.ui = {};
@@ -3677,7 +3623,7 @@ function clearRandomEventPending(){
 function applyRandomEventButtonState(){
   if(!state.ui) return;
 
-  const choiceIds = ["btnJobEvent","btnSchoolEvent","btnSocialEvent","btnInheritance","btnDispute","btnGenLocalTax"];
+  const choiceIds = ["btnJobEvent","btnSchoolEvent","btnSocialEvent","btnGenLocalTax","btnInheritance","btnDispute"];
   const allIds = [...choiceIds, "btnRandomEvent"];
   allIds.forEach(id=>{
     const el = $(id);
@@ -6942,24 +6888,17 @@ function runSocialDecision(){
 
 function pickWeightedRandomEventType(){
   if(!state.randomRun) state.randomRun = {};
-  const last = state.randomRun.lastEventType || null;
-  const prev = state.randomRun.prevEventType || null;
-
-  const weights = getDynamicRandomEventWeights();
-  let pool = [
-    {type:"life", weight:Number(weights.life || 40)},
-    {type:"job", weight:Number(weights.job || 40)},
-    {type:"financial", weight:Number(weights.financial || 20)}
+  const pool = [
+    {type:"gen_local_tax", weight:15},
+    {type:"inheritance", weight:15},
+    {type:"dispute", weight:15},
+    {type:"life", weight:20},
+    {type:"job", weight:20},
+    {type:"financial", weight:15}
   ];
-
-  if(last && prev && last === prev){
-    pool = pool.filter(item => item.type !== last);
-  }
-
   const total = pool.reduce((sum,item)=>sum + item.weight, 0);
   let roll = Math.random() * total;
   let pick = pool[0].type;
-
   for(const item of pool){
     if(roll < item.weight){
       pick = item.type;
@@ -6967,8 +6906,7 @@ function pickWeightedRandomEventType(){
     }
     roll -= item.weight;
   }
-
-  state.randomRun.prevEventType = last;
+  state.randomRun.prevEventType = state.randomRun.lastEventType || null;
   state.randomRun.lastEventType = pick;
   return pick;
 }
@@ -6976,10 +6914,10 @@ function pickWeightedRandomEventType(){
 function getRandomEventPresentation(type){
   if(type === 'job') return { label:'💼 Job Event', buttonId:'btnJobEvent', detail:'work and reputation choices' };
   if(type === 'financial') return { label:'⚠️ Financial Decision', buttonId:'btnSocialEvent', detail:'money pressure and protection choices' };
-  if(type === 'inheritance') return { label:'🎁 Inheritance Lesson', buttonId:'btnInheritance', detail:'unexpected money and choices' };
-  if(type === 'dispute') return { label:'🧾 Billing Dispute', buttonId:'btnDispute', detail:'consumer protection practice' };
-  if(type === 'tax') return { label:'🏛️ Local Tax Lesson', buttonId:'btnGenLocalTax', detail:'tax responsibility practice' };
-  return { label:'👥 Social / Life Scenario', buttonId:'btnSchoolEvent', detail:'people, school, and daily pressure choices' };
+  if(type === 'gen_local_tax') return { label:'🏛️ Generate Local Tax', buttonId:'btnGenLocalTax', detail:'tax lesson and money movement' };
+  if(type === 'inheritance') return { label:'🎁 Trigger Inheritance', buttonId:'btnInheritance', detail:'windfall and account choices' };
+  if(type === 'dispute') return { label:'🧾 Start Billing Dispute', buttonId:'btnDispute', detail:'billing problem and resolution choices' };
+  return { label:'👥 Life Scenario', buttonId:'btnSchoolEvent', detail:'real-life and needs choices' };
 }
 
 function runRandomEvent(){
@@ -6987,14 +6925,8 @@ function runRandomEvent(){
   if(state.ui.randomEventCycling) return;
 
   showBanner('🎲 Rolling your week...');
-  let finalType = pickWeightedRandomEventType();
-  if(finalType === 'financial'){
-    const specialRoll = Math.random();
-    if(specialRoll < 0.18) finalType = 'inheritance';
-    else if(specialRoll < 0.36) finalType = 'dispute';
-    else if(specialRoll < 0.54) finalType = 'tax';
-  }
-  const ids = ["btnSchoolEvent","btnJobEvent","btnSocialEvent","btnInheritance","btnDispute","btnGenLocalTax"]; // life, job, financial + benchmark practice
+  const finalType = pickWeightedRandomEventType();
+  const ids = ["btnSchoolEvent","btnJobEvent","btnSocialEvent","btnGenLocalTax","btnInheritance","btnDispute"]; // life, job, financial, tax, inheritance, dispute order
   let step = 0;
   const cycleCount = 2 + Math.floor(Math.random()*2); // 2 to 3 visible rolls
   const totalSteps = ids.length * cycleCount;
@@ -7395,10 +7327,7 @@ function runJobRealLifeEvent(afterDone){
   if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
   state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
   state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-  const itemName = pair[0], itemId = pair[1];
-  const baseItem = getJobCatalogItem(itemId);
-  const baseCost = Number((baseItem && baseItem.cost) || pair[2] || 0);
-  const rushCost = baseCost > 0 ? baseCost + 3 : Number(pair[2] || 0);
+  const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(pair[2] || 0) + 3;
   const haveIt = invQty(itemId) > 0;
   const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -8558,12 +8487,12 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
   $("btnLedgerClearWeek").onclick=()=> ledgerClearWeek();
 
   $("btnGenLocalTax").onclick=()=>{
-    if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "tax") return;
-    const hadPending = state.ui?.randomEventPendingType === "tax";
+    if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "gen_local_tax") return;
+    const hadPending = state.ui?.randomEventPendingType === "gen_local_tax";
     clearRandomEventPending();
     applyLockRules();
     generateLocalTax();
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   $("btnPayLocalTax").onclick=()=> payLocalTax();
   $("btnInheritance").onclick=()=>{
@@ -8572,7 +8501,7 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     clearRandomEventPending();
     applyLockRules();
     triggerInheritance();
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   $("btnDispute").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "dispute") return;
@@ -8580,7 +8509,7 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     clearRandomEventPending();
     applyLockRules();
     startDispute();
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   if($("btnJobEvent")) $("btnJobEvent").textContent = "Run Job Event";
   if($("btnSchoolEvent")) $("btnSchoolEvent").textContent = "Run Life Scenario";
@@ -9166,6 +9095,82 @@ function formatScenarioFoundationJobPreview(choice){
   }
   return lines.join('\n');
 }
+
+function extractDollarAmountFromText(str){
+  if(!str) return 0;
+  const match = String(str).match(/\$([0-9]+(?:\.[0-9]{1,2})?)/);
+  return match ? Number(match[1]) : 0;
+}
+function inferChoiceMoneyFlow(choice, promptText=''){
+  const effects = (choice && choice.immediate_effects) || {};
+  const checking = Number(effects.checking || 0);
+  const savings = Number(effects.savings || 0);
+  const cdBal = Number(effects.cd_balance || 0);
+  const explicitOut = Math.max(0, -checking) + Math.max(0, -savings) + Math.max(0, -cdBal);
+  const explicitIn = Math.max(0, checking) + Math.max(0, savings) + Math.max(0, cdBal);
+  const label = String((choice && choice.label) || '');
+  const body = `${label} ${promptText || ''}`.toLowerCase();
+  const parsed = extractDollarAmountFromText(label) || extractDollarAmountFromText(promptText);
+  const outgoingHints = /(pay|buy|cover|help with|chip in|upgrade|fare|fee|charger|gas|upkeep|bundle|bus fare|basic charger|deluxe bundle|buy now|help)/i;
+  const incomingHints = /(earn|earned|get paid|receive|refund|tip|inheritance|bonus|deposit|paid you|you got)/i;
+  const outgoing = explicitOut > 0 ? explicitOut : ((parsed > 0 && outgoingHints.test(body)) ? parsed : 0);
+  const incoming = explicitIn > 0 ? explicitIn : ((parsed > 0 && incomingHints.test(body) && outgoing === 0) ? parsed : 0);
+  return { outgoing, incoming };
+}
+function stripChoiceAccountDeltasForSpend(effects){
+  const out = Object.assign({}, effects || {});
+  if(Number(out.checking || 0) < 0) out.checking = 0;
+  if(Number(out.savings || 0) < 0) out.savings = 0;
+  if(Number(out.cd_balance || 0) < 0) out.cd_balance = 0;
+  return out;
+}
+function stripChoiceAccountDeltasForDeposit(effects){
+  const out = Object.assign({}, effects || {});
+  if(Number(out.checking || 0) > 0) out.checking = 0;
+  if(Number(out.savings || 0) > 0) out.savings = 0;
+  if(Number(out.cd_balance || 0) > 0) out.cd_balance = 0;
+  return out;
+}
+function chooseMoneyDestination(amount, reason, onPlaced){
+  const amt = Math.max(0, Number(amount || 0));
+  if(!(amt > 0)){
+    if(typeof onPlaced === 'function') onPlaced('checking');
+    return;
+  }
+  openModal({
+    title:'💰 Choose Where Money Goes',
+    meta:'Pick where to put this money',
+    body:`${reason}\n\nWhere do you want to put ${money(amt)}?`,
+    buttons:[
+      {id:'checking', label:'Put in Checking', kind:'primary'},
+      {id:'savings', label:'Put in Savings', kind:'secondary'},
+      {id:'hysa', label:'Put in HYSA', kind:'success'},
+      {id:'cd', label:'Invest in CD', kind:'warn'},
+      {id:'cancel', label:'Cancel', kind:'secondary'}
+    ],
+    onPick:(dest)=>{
+      if(dest === 'cancel') return;
+      if(dest === 'checking'){
+        state.bank.checking += amt;
+        addLedgerLine(`Money added: +${money(amt)} to checking`);
+      }else if(dest === 'savings'){
+        state.bank.savings += amt;
+        addLedgerLine(`Money added: +${money(amt)} to savings`);
+      }else if(dest === 'hysa'){
+        state.bank.savingsType = 'hysa';
+        if(typeof addToHysa === 'function') addToHysa(amt, 'Scenario deposit');
+        else state.bank.savings += amt;
+        addLedgerLine(`Money added: +${money(amt)} to HYSA`);
+      }else if(dest === 'cd'){
+        if(typeof addCdFromScenarioFoundation === 'function') addCdFromScenarioFoundation(amt);
+        else state.bank.savings += amt;
+        addLedgerLine(`Money invested: +${money(amt)} to CD`);
+      }
+      if(typeof onPlaced === 'function') setTimeout(()=>onPlaced(dest), 50);
+    }
+  });
+}
+
 function playScenarioFoundationScenario(picked, category){
   if(!picked) return showBanner('Scenario missing.');
   markScenarioFoundationPlayed(picked);
@@ -9181,6 +9186,24 @@ function playScenarioFoundationScenario(picked, category){
       return showBanner('Blocked mismatched job event for current job.');
     }
   }
+  function finalizeChoice(choice, effectsToApply, sourceLabel=''){
+    applyScenarioFoundationEffects(effectsToApply || {});
+    queueScenarioFoundationHooks(choice.delayed_hooks || [], `${picked.title} → ${choice.label}`);
+    if(choice.ledger_note) addLedgerLine(choice.ledger_note + (sourceLabel ? ` (${sourceLabel})` : ''));
+    renderAll();
+    const jobPreviewText = formatScenarioFoundationJobPreview(choice);
+    const follow = `${choice.ledger_note ? choice.ledger_note + '\n\n' : ''}${jobPreviewText ? jobPreviewText + '\n\n' : ''}${choice.reflection_tag ? 'Tag: ' + choice.reflection_tag : 'Decision recorded.'}`;
+    openModal({
+      title: 'Decision recorded',
+      meta: picked.title,
+      body: follow,
+      buttons:[{id:'ok',label:'Continue',kind:'primary'}],
+      onPick: ()=> {
+        renderAll();
+        if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
+      }
+    });
+  }
   openModal({
     title: `${category === 'real_life' ? '👥 Life Scenario' : category === 'financial' ? '⚠️ Financial Decision' : category === 'opportunity' ? '💼 Job Opportunity' : '💳 Elite Credit Scenario'}`,
     meta,
@@ -9190,22 +9213,22 @@ function playScenarioFoundationScenario(picked, category){
       const idx = Number(String(id).replace('choice_',''));
       const choice = (picked.choices || [])[idx];
       if(!choice) return;
-      applyScenarioFoundationEffects(choice.immediate_effects || {});
-      queueScenarioFoundationHooks(choice.delayed_hooks || [], `${picked.title} → ${choice.label}`);
-      if(choice.ledger_note) addLedgerLine(choice.ledger_note);
-      renderAll();
-      const jobPreviewText = formatScenarioFoundationJobPreview(choice);
-      const follow = `${choice.ledger_note ? choice.ledger_note + '\n\n' : ''}${jobPreviewText ? jobPreviewText + '\n\n' : ''}${choice.reflection_tag ? 'Tag: ' + choice.reflection_tag : 'Decision recorded.'}`;
-      openModal({
-        title: 'Decision recorded',
-        meta: picked.title,
-        body: follow,
-        buttons:[{id:'ok',label:'Continue',kind:'primary'}],
-        onPick: ()=> {
-          renderAll();
-          if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
-        }
-      });
+      const flow = inferChoiceMoneyFlow(choice, picked.prompt || '');
+      if(flow.outgoing > 0){
+        const cleaned = stripChoiceAccountDeltasForSpend(choice.immediate_effects || {});
+        chooseFundingSource(flow.outgoing, `${choice.label}\n\nChoose where to take ${money(flow.outgoing)} from:`, (src)=>{
+          finalizeChoice(choice, cleaned, `paid from ${formatSourceLabel(src)}`);
+        });
+        return;
+      }
+      if(flow.incoming > 0){
+        const cleaned = stripChoiceAccountDeltasForDeposit(choice.immediate_effects || {});
+        chooseMoneyDestination(flow.incoming, `${choice.label}`, (dest)=>{
+          finalizeChoice(choice, cleaned, `sent to ${String(dest).toUpperCase()}`);
+        });
+        return;
+      }
+      finalizeChoice(choice, choice.immediate_effects || {}, '');
     }
   });
 }
@@ -10420,7 +10443,7 @@ Required:
     }
     const res = __origNotifyAction.apply(this, arguments);
     const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
-    const weeklyCountActions = new Set(['job_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','gen_local_tax','inheritance','dispute','review_contract','contract_pick']);
+    const weeklyCountActions = new Set(['job_event','weekly','transfer_savings','open_cd','write_check','deposit_check','gen_local_tax','pay_local_tax','inheritance','dispute','review_contract','contract_pick']);
     if(wr && wr.awaitingResolution && weeklyCountActions.has(action)){
       completeWeeklyRandomEvent();
     }
