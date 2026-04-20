@@ -759,9 +759,10 @@ function showDecisionBadge(text){
   label.textContent = text;
   box.style.display = 'inline-flex';
   box.style.bottom = 'auto';
-  box.style.top = '72px';
+  box.style.top = 'calc(50% - 220px)';
   box.style.left = '50%';
   box.style.transform = 'translateX(-50%)';
+  box.style.zIndex = '1001';
   box.classList.add('show');
   clearTimeout(decisionBadgeTimer);
   decisionBadgeTimer = setTimeout(()=>{
