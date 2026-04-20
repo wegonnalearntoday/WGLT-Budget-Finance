@@ -1,0 +1,26 @@
+[
+  {
+    "hook": "paymentRequired",
+    "count": 602
+  },
+  {
+    "hook": "generated_job_template",
+    "count": 256
+  },
+  {
+    "hook": "side_hustle_profit",
+    "count": 194
+  },
+  {
+    "hook": "equal",
+    "count": 144
+  },
+  {
+    "hook": "Spending Habit Track",
+    "count": 86
+  },
+  {
+    "hook": "spendingHabit",
+    "count": 86
+  }
+]

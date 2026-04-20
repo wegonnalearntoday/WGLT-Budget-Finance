@@ -4882,7 +4882,7 @@ Required:
 • Review Selected Contract`, requireActions:["contract_pick","review_contract"] });
     }
     if(m===9){
-      steps.push({ title:"Month 9: Transfer more savings", bucket:[1,12], prompt:`Move $10, $25, $50, or $100 from checking to savings.
+      steps.push({ title:"Month 9: Transfer more savings", bucket:[1,12], prompt:`Move more money from checking to savings.
 
 Required:
 • Transfer money from checking to savings`, requireActions:["transfer_savings"] });
@@ -10087,105 +10087,100 @@ window.WGLT_DEBUG.inspectJobIdentity = function(jobId){
 })();
 
 
-/* ===== Phase 6.3 funding + transfer prompt patch ===== */
+/* ============================================================
+   PHASE 6 PATCH: clean setup-to-48-week handoff
+   - Beginner stays Budget Boss Jr via existing config routing
+   - Replaces old month-step mission prompts with:
+     Setup Step 4: Bank + Insurance
+     Setup Step 5: Savings Goal
+     Setup Step 6: Stock up supplies
+     Week 1..48: Next Week flow
+   ============================================================ */
 (function(){
-  function inferScenarioFoundationFunding(choice){
-    if(!choice) return null;
-    const direct = Number(choice.cost || choice.amount || choice.money_amount || 0);
-    if(Number.isFinite(direct) && direct > 0) return { amount: direct, sourceKey: null };
-    const eff = choice.immediate_effects || {};
-    const checking = Number(eff.checking || 0);
-    const savings = Number(eff.savings || 0);
-    const cash = Number(eff.cash || 0);
-    if(checking < 0) return { amount: Math.abs(checking), sourceKey: 'checking' };
-    if(savings < 0) return { amount: Math.abs(savings), sourceKey: 'savings' };
-    if(cash < 0) return { amount: Math.abs(cash), sourceKey: 'cash' };
-    const labelBlob = `${choice.label || ''} ${choice.hint || ''}`;
-    const match = labelBlob.match(/\$([0-9]+)/);
-    if(match) return { amount: Number(match[1]), sourceKey: null };
-    const promptBlob = `${choice.summary || ''} ${choice.ledger_note || ''} ${choice.reflection_tag || ''}`.toLowerCase();
-    if(/\b(pay|paid|buy|bought|fee|upgrade|cost|spend|spent)\b/.test(promptBlob)){
-      return { amount: 5, sourceKey: null, inferredDefault: true };
+  const __origBuildMonthMissionSteps = buildMonthMissionSteps;
+  const __origGetMissionStepDisplay = getMissionStepDisplay;
+  const __origStartMission = startMission;
+
+  function make48WeekMissionSteps(){
+    const steps = [
+      {
+        title:"Choose bank + insurance",
+        bucket:[1,6,12,3],
+        prompt:`Choose your checking account, savings account, and insurance.
+
+Required:
+• Tap "Choose Bank + Insurance (Start)" (Banking tab)`,
+        requireActions:["startup_choose"],
+        phase:"setup",
+        setupStep:4
+      },
+      {
+        title:"Set Savings Goal",
+        bucket:[12,3],
+        prompt:`Pick a year-end savings goal.
+
+Required:
+• Tap "Savings Challenge" (Plan tab) and set a goal`,
+        requireActions:["savings_goal"],
+        phase:"setup",
+        setupStep:5
+      },
+      {
+        title:"Stock up supplies",
+        bucket:[3,1],
+        prompt:`Use the Ledger to buy one job item before the year begins.
+
+Required:
+• Buy ONE item in the Ledger tab`,
+        requireActions:["ledger_buy"],
+        phase:"setup",
+        setupStep:6
+      }
+    ];
+
+    for(let w=1; w<=48; w++){
+      const monthName = (typeof weekToMonthName === 'function') ? weekToMonthName(w) : '';
+      const isFirst = w === 1;
+      steps.push({
+        title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
+        bucket:[9,12],
+        prompt: isFirst
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`,
+        requireActions:["next_week"],
+        phase:"year",
+        weekNumber:w
+      });
     }
-    return null;
+    return steps;
   }
 
-  function buildScenarioFoundationFundingPrompt(choice, amt){
-    return `${choice.label}${amt ? ` for ${money(amt)}` : ''}\n\nChoose which account to pay from:`;
-  }
+  buildMonthMissionSteps = function(){
+    return make48WeekMissionSteps();
+  };
 
-  function sanitizeScenarioFoundationEffectsForFunding(effects, funding){
-    const next = Object.assign({}, effects || {});
-    if(!funding || !funding.amount) return next;
-    const amt = Number(funding.amount || 0);
-    const keys = funding.sourceKey ? [funding.sourceKey] : ['checking', 'savings', 'cash'];
-    keys.forEach((key)=>{
-      if(Number(next[key] || 0) < 0){
-        const current = Math.abs(Number(next[key] || 0));
-        if(current <= amt + 0.001) next[key] = 0;
-        else next[key] = -(current - amt);
+  getMissionStepDisplay = function(step){
+    if(step && step.phase === 'setup'){
+      return { title: step.title || 'Setup', prompt: step.prompt || '' };
+    }
+    if(step && step.phase === 'year'){
+      return { title: step.title || `Week ${step.weekNumber || 1}`, prompt: step.prompt || '' };
+    }
+    return __origGetMissionStepDisplay(step);
+  };
+
+  startMission = function(){
+    const result = __origStartMission.apply(this, arguments);
+    try{
+      if(state && state.mission && state.mission.active){
+        state.mission.steps = make48WeekMissionSteps();
+        state.mission.index = 0;
+        state.mission.waitingAction = null;
+        setLog("Setup started. Finish banking, savings goal, and supplies, then Week 1 begins the 48-week challenge.");
+        renderAll();
+        runCurrentMissionStep();
       }
-    });
-    return next;
-  }
-
-  const __patchedPlayScenarioFoundationScenario = playScenarioFoundationScenario;
-  playScenarioFoundationScenario = function(picked, category){
-    if(!picked) return showBanner('Scenario missing.');
-    markScenarioFoundationPlayed(picked);
-    const buttons = (picked.choices || []).map((choice, idx) => ({
-      id: 'choice_' + idx,
-      label: choice.label,
-      kind: idx === 0 ? 'primary' : 'secondary'
-    }));
-    const meta = `Step ${getScenarioFoundationCurrentStep()} • ${picked.title}`;
-    openModal({
-      title: `${category === 'real_life' ? '👥 Life Scenario' : category === 'financial' ? '⚠️ Financial Decision' : category === 'opportunity' ? '💼 Job Opportunity' : '💳 Elite Credit Scenario'}`,
-      meta,
-      body: picked.prompt,
-      buttons,
-      onPick: (id)=>{
-        const idx = Number(String(id).replace('choice_',''));
-        const choice = (picked.choices || [])[idx];
-        if(!choice) return;
-
-        const finishChoice = (paymentInfo)=>{
-          const adjustedEffects = paymentInfo ? sanitizeScenarioFoundationEffectsForFunding(choice.immediate_effects || {}, paymentInfo) : (choice.immediate_effects || {});
-          applyScenarioFoundationEffects(adjustedEffects);
-          queueScenarioFoundationHooks(choice.delayed_hooks || [], `${picked.title} → ${choice.label}`);
-          if(choice.ledger_note) addLedgerLine(choice.ledger_note);
-          const jobOutcomeText = (typeof applyCurrentJobPreview === 'function') ? applyCurrentJobPreview(picked, choice) : '';
-          renderAll();
-          const jobPreviewText = formatScenarioFoundationJobPreview(choice);
-          const pieces = [];
-          if(choice.ledger_note) pieces.push(choice.ledger_note);
-          if(jobOutcomeText) pieces.push(`${(getCurrentJobSystemConfig() || {}).engineLabel || 'Job'} engine:\n` + jobOutcomeText);
-          else if(jobPreviewText) pieces.push(jobPreviewText);
-          if(choice.reflection_tag) pieces.push('Tag: ' + choice.reflection_tag);
-          const follow = pieces.join('\n') || 'Decision recorded.';
-          openModal({
-            title: 'Decision recorded',
-            meta: picked.title,
-            body: follow,
-            buttons:[{id:'ok',label:'Continue',kind:'primary'}],
-            onPick: ()=> {
-              renderAll();
-              if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
-            }
-          });
-        };
-
-        const funding = inferScenarioFoundationFunding(choice);
-        if(funding && funding.amount > 0){
-          chooseFundingSource(funding.amount, buildScenarioFoundationFundingPrompt(choice, funding.amount), (src)=>{
-            showDecisionBadge(`Paid from ${formatSourceLabel(src)}: ${money(funding.amount)}`);
-            finishChoice({ source: src, amount: funding.amount, sourceKey: funding.sourceKey });
-          });
-          return;
-        }
-
-        finishChoice(null);
-      }
-    });
+    }catch(err){}
+    return result;
   };
 })();
