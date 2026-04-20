@@ -3454,7 +3454,8 @@ function closeModal(){
   $("overlay").classList.remove("show");
   $("overlay").setAttribute("aria-hidden","true");
 }
-$("overlay").addEventListener("click",(e)=>{ if(e.target===$("overlay")) { beep("warn"); closeModal(); } });
+$("overlay").addEventListener("click",(e)=>{ if(e.target===$("overlay")) { beep("warn"); e.preventDefault(); e.stopPropagation(); return false; } }, true);
+document.addEventListener("keydown", (e)=>{ if(e.key === "Escape" && $("overlay") && $("overlay").classList.contains("show")){ e.preventDefault(); e.stopPropagation(); return false; } }, true);
 
 /* Banner */
 let bannerTimer=null;
@@ -9091,6 +9092,12 @@ function playScenarioFoundationScenario(picked, category){
     kind: idx === 0 ? 'primary' : 'secondary'
   }));
   const meta = `Step ${getScenarioFoundationCurrentStep()} • ${picked.title}`;
+  if(category === 'opportunity'){
+    const currentJobIds = getScenarioFoundationCurrentJobIds();
+    if(Array.isArray(picked.jobs) && picked.jobs.length && !picked.jobs.some(j => currentJobIds.includes(String(j)) || String(j) === 'all')){
+      return showBanner('Blocked mismatched job event for current job.');
+    }
+  }
   openModal({
     title: `${category === 'real_life' ? '👥 Life Scenario' : category === 'financial' ? '⚠️ Financial Decision' : category === 'opportunity' ? '💼 Job Opportunity' : '💳 Elite Credit Scenario'}`,
     meta,
@@ -9122,9 +9129,46 @@ function playScenarioFoundationScenario(picked, category){
 function runScenarioFoundationCategory(category, fallbackFn){
   const pack = getScenarioFoundationPacksByCategory(category);
   if(!pack.length) return fallbackFn ? fallbackFn() : showBanner('No scenario pack loaded.');
-  const candidates = pack.filter(sc => scenarioFoundationMatches(sc, category));
+
+  const currentJobIds = getScenarioFoundationCurrentJobIds();
+  const strictJobMatch = (sc) => {
+    if(!Array.isArray(sc.jobs) || !sc.jobs.length) return true;
+    return sc.jobs.some(j => currentJobIds.includes(String(j)) || String(j) === 'all');
+  };
+  const modeOk = (sc) => {
+    const modeTags = getScenarioFoundationModeTags();
+    return !Array.isArray(sc.mode) || !sc.mode.length || sc.mode.some(m => modeTags.includes(m));
+  };
+  const triggerOk = (sc) => {
+    const step = getScenarioFoundationCurrentStep();
+    const tr = sc.triggers || {};
+    if(Number(tr.min_step || 1) > step) return false;
+    if(Number(tr.max_step || 48) < step) return false;
+    if(Array.isArray(tr.requires) && tr.requires.length){
+      for(const req of tr.requires){
+        if(req === 'elite_mode' && !isEliteExperience()) return false;
+        if(req === 'teacher_role' && !isTeacherRole()) return false;
+      }
+    }
+    return true;
+  };
+
+  let candidates = pack.filter(sc => String(sc.category || '') === String(category) && modeOk(sc) && triggerOk(sc) && strictJobMatch(sc) && !scenarioFoundationBlockedByRepeat(sc, getScenarioFoundationCurrentStep()));
+
+  if(!candidates.length){
+    candidates = pack.filter(sc => String(sc.category || '') === String(category) && modeOk(sc) && triggerOk(sc) && strictJobMatch(sc));
+  }
+
+  if(!candidates.length){
+    const genericCandidates = pack.filter(sc => String(sc.category || '') === String(category) && modeOk(sc) && triggerOk(sc) && (!Array.isArray(sc.jobs) || !sc.jobs.length || sc.jobs.includes('all')));
+    if(genericCandidates.length) candidates = genericCandidates;
+  }
+
   const picked = pickWeightedScenarioFoundation(candidates);
-  if(!picked) return fallbackFn ? fallbackFn() : showBanner('No matching scenario this step.');
+  if(!picked){
+    const activeJob = (()=>{ try{ return ((state.jobs && state.jobs[state.jobIndex]) || {}).name || 'current job'; }catch(err){ return 'current job'; }})();
+    return showBanner(`No matching ${category.replace('_',' ')} scenario for ${activeJob}.`);
+  }
   return playScenarioFoundationScenario(picked, category);
 }
 function openScenarioFoundationDebugPicker(category){
