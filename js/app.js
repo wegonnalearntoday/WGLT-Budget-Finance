@@ -4972,21 +4972,37 @@ function startMission(){
     guidePreStart();
     return;
   }
-  const selectedJob = state.jobs[state.jobIndex];
+
+  if(!Array.isArray(state.jobs) || !state.jobs.length){
+    beep("warn");
+    openTab("plan");
+    showBanner("No jobs are available right now");
+    return;
+  }
+
+  if(typeof state.jobIndex !== "number" || state.jobIndex < 0 || state.jobIndex >= state.jobs.length){
+    state.jobIndex = 0;
+  }
+
+  let selectedJob = state.jobs[state.jobIndex] || state.jobs[0];
   if(!selectedJob){
     beep("warn");
     openTab("plan");
     showBanner("Choose your job first");
     return;
   }
-  if(!state.jobLocked){
-    if(selectedJob && !isJobUnlocked(selectedJob.id)){
-      beep("warn");
-      showBanner(selectedJob.name + " is locked. " + getUnlockRequirementText(selectedJob.id));
-      return;
-    }
-    state.jobLocked = true;
+
+  if(selectedJob && !isJobUnlocked(selectedJob.id)){
+    beep("warn");
+    showBanner(selectedJob.name + " is locked. " + getUnlockRequirementText(selectedJob.id));
+    return;
   }
+
+  // The selected job in the carousel becomes the locked job when the mission starts.
+  // This avoids the old loop where the app demanded a separate lock step even after the
+  // player had already picked a job and was ready to move into setup.
+  state.jobLocked = true;
+
   if((!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()) && getPendingWantsSelectionTotal() >= getWantsTargetAmount()){
     const selected = getSelectedWantInputs();
     state.plan.wantsSelections = selected.map(o=>({label:o.dataset.label || o.parentElement?.innerText?.trim() || `Want ${o.value}`, value:Number(o.value||0)}));
@@ -4996,6 +5012,7 @@ function startMission(){
     state.plan.unplannedWantUsedThisMonth = false;
     state.plan.wantsInventoryActive = state.plan.wantsSelections.map(w=>({label:w.label, value:w.value, available:true}));
   }
+
   if(!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()){
     beep("warn");
     openTab("plan");
@@ -5003,7 +5020,8 @@ function startMission(){
     updateWantsUI();
     return;
   }
-  const job = state.jobs[state.jobIndex];
+
+  const job = selectedJob;
   state.day = 1;
   state.plan.income = job.pay * 4;
   state.plan.wantsExtras = 0;
