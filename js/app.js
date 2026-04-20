@@ -758,17 +758,12 @@ function showDecisionBadge(text){
   if(!box || !label || !text) return;
   label.textContent = text;
   box.style.display = 'inline-flex';
-  box.style.bottom = 'auto';
-  box.style.top = 'calc(50% - 220px)';
-  box.style.left = '50%';
-  box.style.transform = 'translateX(-50%)';
-  box.style.zIndex = '1001';
   box.classList.add('show');
   clearTimeout(decisionBadgeTimer);
   decisionBadgeTimer = setTimeout(()=>{
     box.classList.remove('show');
     box.style.display = 'none';
-  }, 1200);
+  }, 2600);
 }
 function formatSourceLabel(src){
   if(src === 'cd') return 'CD';
@@ -3096,33 +3091,6 @@ function inferChoiceRewardAmount(choice){
   const buckets = [choice?.reward || {}, choice?.effects || {}];
   return buckets.reduce((sum, fx)=> sum + Math.max(0, Number(fx.cash || 0)) + Math.max(0, Number(fx.checking || 0)) + Math.max(0, Number(fx.savings || 0)), 0);
 }
-
-function inferFallbackChoiceCost(choice, ev){
-  const blob = `${choice?.label || ''} ${choice?.hint || ''} ${ev?.title || ''} ${ev?.prompt || ''} ${ev?.description || ''}`.toLowerCase();
-  const explicit = blob.match(/\$(\d+)/);
-  if(explicit) return Number(explicit[1]);
-  if(/pay a little|spend a little|upgrade|repair|restock|materials|suppl|tool|promo|flyer|transport|rush|buy ahead|invest|helper|discount|down payment/.test(blob)){
-    if((ev?.typeKey || '') === 'life') return 5;
-    if((ev?.typeKey || '') === 'financial') return 12;
-    return 10;
-  }
-  if(/handle the need|budgeted move|backup plan|solve it|cover it|fix it|protect cash/.test(blob)){
-    return 5;
-  }
-  return 0;
-}
-function getChoicePaymentAmount(choice, ev){
-  const explicitCost = Number(choice?.cost || 0);
-  const inferred = inferChoiceCost(choice);
-  return explicitCost > 0 ? explicitCost : (inferred > 0 ? inferred : inferFallbackChoiceCost(choice, ev));
-}
-function decorateChoiceLabel(choice, ev){
-  const amount = getChoicePaymentAmount(choice, ev);
-  if(amount > 0 && !/\$\d+/.test(String(choice?.label || ''))){
-    return `${choice.label} (${money(amount)})`;
-  }
-  return choice.label;
-}
 function rerouteGenericMoneyEffects(effects, mode, targetKey){
   const fx = Object.assign({}, effects || {});
   const moneyKeys = ['cash','checking','savings'];
@@ -3252,7 +3220,7 @@ function pickUniqueEventFromPool(type, week){
   if(type === 'life'){
     const wants = available.filter(ev => !!ev.__isWantAware);
     const other = available.filter(ev => !ev.__isWantAware);
-    if(wants.length && other.length) return Math.random() < 0.25 ? pickFrom(wants) : pickFrom(other);
+    if(wants.length && other.length) return Math.random() < 0.5 ? pickFrom(wants) : pickFrom(other);
     return pickFrom(available);
   }
 
@@ -3310,7 +3278,7 @@ function queueGenericDelayedConsequence(choice, week, title){
 }
 function applyGenericChoice(choice, ev, week, onDone){
   const payment = choice.paymentRequired || (inferChoiceCost(choice) > 0 && ((choice.effects && (Number(choice.effects.cash || 0) < 0 || Number(choice.effects.checking || 0) < 0 || Number(choice.effects.savings || 0) < 0)) || choice.cost));
-  const amt = getChoicePaymentAmount(choice, ev);
+  const amt = inferChoiceCost(choice);
   const rewardAmt = inferChoiceRewardAmount(choice);
 
   const finish = (paymentSource='', rewardDest='')=>{
@@ -3366,7 +3334,7 @@ function openGeneratedEventModal(ev, week, onDone){
     title:`🎲 Step ${week}: ${ev.title}`,
     meta:`${(ev.typeKey || 'life').toUpperCase()} • ${job.name}`,
     body:buildGenericEventPrompt(ev, job),
-    buttons:choices.map((choice, idx)=>({ id:String(idx), label:decorateChoiceLabel(choice, ev), kind: idx === 0 ? 'primary' : (idx === 1 ? 'secondary' : 'warn') })),
+    buttons:choices.map((choice, idx)=>({ id:String(idx), label:choice.label, kind: idx === 0 ? 'primary' : (idx === 1 ? 'secondary' : 'warn') })),
     onPick:(pickId)=>{
       const choice = choices[Number(pickId)];
       if(!choice) return;
@@ -3379,10 +3347,10 @@ function runEventEngineV1(week, onAllDone){
   const main = pickUniqueEventFromPool(pickedType, week) || pickUniqueEventFromPool('life', week) || pickUniqueEventFromPool('job', week) || pickUniqueEventFromPool('financial', week);
   const queue = [];
   if(main) queue.push(main);
-  if(Math.random() < 0.22){
+  if(Math.random() < 0.55){
     queue.push(createSocialWantEvent(week));
   }
-  if(Math.random() < 0.35){
+  if(Math.random() < 0.28){
     const alt = ['life','job','financial'].filter(x => x !== pickedType);
     const bonusType = alt[Math.floor(Math.random() * alt.length)] || 'life';
     const bonus = pickUniqueEventFromPool(bonusType, week);
@@ -3394,18 +3362,8 @@ function runEventEngineV1(week, onAllDone){
     if(fallback) queue.push(fallback);
   }
   let idx = 0;
-  function focusNextRequired(){
-    const waiting = state && state.mission ? state.mission.waitingAction : null;
-    const req = waiting ? requiredControlForAction(waiting) : null;
-    if(req?.tab) openTab(req.tab, {auto:true});
-    if(req?.el) scrollToBtn(req.el);
-  }
   function runNext(){
-    if(idx >= queue.length){
-      if(onAllDone) onAllDone();
-      setTimeout(focusNextRequired, 260);
-      return;
-    }
+    if(idx >= queue.length){ if(onAllDone) onAllDone(); return; }
     const ev = queue[idx++];
     if(ev && typeof ev.customRunner === 'function'){
       ev.customRunner(runNext);
@@ -3470,9 +3428,7 @@ function beep(type="success"){
 }
 
 /* Modal */
-function openModal({title,meta="",body="",buttons=[{id:"close",label:"Close",kind:"secondary"}],onPick=null, allowOverlayClose=false}){
-  if(!state.ui) state.ui = {};
-  state.ui.modalAllowOverlayClose = !!allowOverlayClose;
+function openModal({title,meta="",body="",buttons=[{id:"close",label:"Close",kind:"secondary"}],onPick=null}){
   $("mTitle").textContent=title;
   $("mMeta").textContent=meta;
   $("mBody").textContent=body;
@@ -3495,16 +3451,10 @@ function openModal({title,meta="",body="",buttons=[{id:"close",label:"Close",kin
   $("overlay").setAttribute("aria-hidden","false");
 }
 function closeModal(){
-  if(state.ui) state.ui.modalAllowOverlayClose = false;
   $("overlay").classList.remove("show");
   $("overlay").setAttribute("aria-hidden","true");
 }
-$("overlay").addEventListener("click",(e)=>{
-  if(e.target === $("overlay")){
-    beep("warn");
-    if(state.ui && state.ui.modalAllowOverlayClose) closeModal();
-  }
-});
+$("overlay").addEventListener("click",(e)=>{ if(e.target===$("overlay")) { beep("warn"); closeModal(); } });
 
 /* Banner */
 let bannerTimer=null;
@@ -4932,7 +4882,7 @@ Required:
 • Review Selected Contract`, requireActions:["contract_pick","review_contract"] });
     }
     if(m===9){
-      steps.push({ title:"Month 9: Transfer more savings", bucket:[1,12], prompt:`Move more money from checking to savings.
+      steps.push({ title:"Month 9: Transfer more savings", bucket:[1,12], prompt:`Move $10, $25, $50, or $100 from checking to savings.
 
 Required:
 • Transfer money from checking to savings`, requireActions:["transfer_savings"] });
@@ -6230,20 +6180,15 @@ function startWeeklyStudentFlow(onAllDone){
     }
   };
 
-  const currentWeek = state.weekEngine ? Number(state.weekEngine.week || 1) : Number(currentWeekIndex ? currentWeekIndex() : 1);
-  const shouldPromptSupplies = currentWeek % 2 === 1;
-
+  // Student flow: always show the weekly job supply/inventory decision first,
+  // then continue into the normal random-event steps.
   setTimeout(()=>{
     if(!state.ui) state.ui = {};
-    if(shouldPromptSupplies){
-      state.ui.forceWeeklySupplyDecision = true;
-      runJobRealLifeEvent(()=>{
-        state.ui.forceWeeklySupplyDecision = false;
-        setTimeout(launchRandomPhase, 150);
-      });
-      return;
-    }
-    launchRandomPhase();
+    state.ui.forceWeeklySupplyDecision = true;
+    runJobRealLifeEvent(()=>{
+      state.ui.forceWeeklySupplyDecision = false;
+      setTimeout(launchRandomPhase, 150);
+    });
   }, 180);
 }
 
@@ -10139,4 +10084,108 @@ window.WGLT_DEBUG.inspectJobIdentity = function(jobId){
       };
     }
   }catch(err){}
+})();
+
+
+/* ===== Phase 6.3 funding + transfer prompt patch ===== */
+(function(){
+  function inferScenarioFoundationFunding(choice){
+    if(!choice) return null;
+    const direct = Number(choice.cost || choice.amount || choice.money_amount || 0);
+    if(Number.isFinite(direct) && direct > 0) return { amount: direct, sourceKey: null };
+    const eff = choice.immediate_effects || {};
+    const checking = Number(eff.checking || 0);
+    const savings = Number(eff.savings || 0);
+    const cash = Number(eff.cash || 0);
+    if(checking < 0) return { amount: Math.abs(checking), sourceKey: 'checking' };
+    if(savings < 0) return { amount: Math.abs(savings), sourceKey: 'savings' };
+    if(cash < 0) return { amount: Math.abs(cash), sourceKey: 'cash' };
+    const labelBlob = `${choice.label || ''} ${choice.hint || ''}`;
+    const match = labelBlob.match(/\$([0-9]+)/);
+    if(match) return { amount: Number(match[1]), sourceKey: null };
+    const promptBlob = `${choice.summary || ''} ${choice.ledger_note || ''} ${choice.reflection_tag || ''}`.toLowerCase();
+    if(/\b(pay|paid|buy|bought|fee|upgrade|cost|spend|spent)\b/.test(promptBlob)){
+      return { amount: 5, sourceKey: null, inferredDefault: true };
+    }
+    return null;
+  }
+
+  function buildScenarioFoundationFundingPrompt(choice, amt){
+    return `${choice.label}${amt ? ` for ${money(amt)}` : ''}\n\nChoose which account to pay from:`;
+  }
+
+  function sanitizeScenarioFoundationEffectsForFunding(effects, funding){
+    const next = Object.assign({}, effects || {});
+    if(!funding || !funding.amount) return next;
+    const amt = Number(funding.amount || 0);
+    const keys = funding.sourceKey ? [funding.sourceKey] : ['checking', 'savings', 'cash'];
+    keys.forEach((key)=>{
+      if(Number(next[key] || 0) < 0){
+        const current = Math.abs(Number(next[key] || 0));
+        if(current <= amt + 0.001) next[key] = 0;
+        else next[key] = -(current - amt);
+      }
+    });
+    return next;
+  }
+
+  const __patchedPlayScenarioFoundationScenario = playScenarioFoundationScenario;
+  playScenarioFoundationScenario = function(picked, category){
+    if(!picked) return showBanner('Scenario missing.');
+    markScenarioFoundationPlayed(picked);
+    const buttons = (picked.choices || []).map((choice, idx) => ({
+      id: 'choice_' + idx,
+      label: choice.label,
+      kind: idx === 0 ? 'primary' : 'secondary'
+    }));
+    const meta = `Step ${getScenarioFoundationCurrentStep()} • ${picked.title}`;
+    openModal({
+      title: `${category === 'real_life' ? '👥 Life Scenario' : category === 'financial' ? '⚠️ Financial Decision' : category === 'opportunity' ? '💼 Job Opportunity' : '💳 Elite Credit Scenario'}`,
+      meta,
+      body: picked.prompt,
+      buttons,
+      onPick: (id)=>{
+        const idx = Number(String(id).replace('choice_',''));
+        const choice = (picked.choices || [])[idx];
+        if(!choice) return;
+
+        const finishChoice = (paymentInfo)=>{
+          const adjustedEffects = paymentInfo ? sanitizeScenarioFoundationEffectsForFunding(choice.immediate_effects || {}, paymentInfo) : (choice.immediate_effects || {});
+          applyScenarioFoundationEffects(adjustedEffects);
+          queueScenarioFoundationHooks(choice.delayed_hooks || [], `${picked.title} → ${choice.label}`);
+          if(choice.ledger_note) addLedgerLine(choice.ledger_note);
+          const jobOutcomeText = (typeof applyCurrentJobPreview === 'function') ? applyCurrentJobPreview(picked, choice) : '';
+          renderAll();
+          const jobPreviewText = formatScenarioFoundationJobPreview(choice);
+          const pieces = [];
+          if(choice.ledger_note) pieces.push(choice.ledger_note);
+          if(jobOutcomeText) pieces.push(`${(getCurrentJobSystemConfig() || {}).engineLabel || 'Job'} engine:\n` + jobOutcomeText);
+          else if(jobPreviewText) pieces.push(jobPreviewText);
+          if(choice.reflection_tag) pieces.push('Tag: ' + choice.reflection_tag);
+          const follow = pieces.join('\n') || 'Decision recorded.';
+          openModal({
+            title: 'Decision recorded',
+            meta: picked.title,
+            body: follow,
+            buttons:[{id:'ok',label:'Continue',kind:'primary'}],
+            onPick: ()=> {
+              renderAll();
+              if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
+            }
+          });
+        };
+
+        const funding = inferScenarioFoundationFunding(choice);
+        if(funding && funding.amount > 0){
+          chooseFundingSource(funding.amount, buildScenarioFoundationFundingPrompt(choice, funding.amount), (src)=>{
+            showDecisionBadge(`Paid from ${formatSourceLabel(src)}: ${money(funding.amount)}`);
+            finishChoice({ source: src, amount: funding.amount, sourceKey: funding.sourceKey });
+          });
+          return;
+        }
+
+        finishChoice(null);
+      }
+    });
+  };
 })();
