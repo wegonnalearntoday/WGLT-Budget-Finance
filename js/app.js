@@ -3039,6 +3039,7 @@ ${c.disclosure}`;
 function initWeekEngine(){
   state.weekEngine = {
     week: 1,          // current week 1-48
+    active: false,    // setup phase stays separate until supplies are stocked
     choices: {},      // scenario id → choice index made
     pending: [],      // consequence queue
     ranBonus: {},     // week → true if bonus already ran
@@ -3376,16 +3377,36 @@ function runEventEngineV1(week, onAllDone){
 
 /* Main weekly scenario runner — called from nextWeek() */
 function runWeeklyScenarios(week, onAllDone){
-  return runEventEngineV1(week, onAllDone);
+  const categoryOrder = ['real_life','opportunity','financial'];
+  let idx = 0;
+  function runNext(){
+    if(idx >= categoryOrder.length){ if(typeof onAllDone === 'function') onAllDone(); return; }
+    const category = categoryOrder[idx++];
+    if(!state.ui) state.ui = {};
+    state.ui._scenarioChainNext = runNext;
+    return runScenarioFoundationCategory(category, ()=>{
+      delete state.ui._scenarioChainNext;
+      addLedgerLine(`Scenario engine fallback: no matching ${category} scenario found for Week ${week}.`);
+      runNext();
+    });
+  }
+  return runNext();
 }
 
 /* Update the header week/month display */
 function renderWeekHeader(){
+  if(state.weekEngine && !state.weekEngine.active){
+    const step = state.mission && state.mission.active ? state.mission.steps[state.mission.index] : null;
+    const label = step && step.title ? step.title.replace(/^Setup Step\s*\d+:\s*/i, '') : 'Complete setup';
+    if($("weekNum")) $("weekNum").textContent = 'Setup';
+    if($("monthName")) $("monthName").textContent = label;
+    state.day = 1;
+    return;
+  }
   const w = state.weekEngine ? state.weekEngine.week : 1;
   const cal = WEEK_CALENDAR[Math.min(w,48)] || WEEK_CALENDAR[1];
   if($("weekNum")) $("weekNum").textContent = w;
   if($("monthName")) $("monthName").textContent = cal.name;
-  // Also update internal state.day to the calendar month for existing logic
   state.day = cal.m;
 }
 
@@ -3582,6 +3603,8 @@ function trackCoverageForAction(action){
     savings_goal:[12,3],
     suggested_plan:[3,7],
     apply_plan:[7],
+    choose_job:[6,12],
+    finalize_wants:[3,12],
     next_week:[9,12],
     ledger_buy:[3,1],
     ledger_use:[3],
@@ -3730,6 +3753,8 @@ function requiredControlForAction(action){
     savings_goal:{tab:"plan", el:"btnSavingsChallenge"},
     suggested_plan:{tab:"plan", el:"btnSuggestedPlan"},
     apply_plan:{tab:"plan", el:"btnApplyPlan"},
+    choose_job:{tab:"job", el:"btnLockJob"},
+    finalize_wants:{tab:"plan", el:"btnAddWant"},
     ledger_buy:{tab:"ledger", el:"btnLedgerBuy"},
     job_event:{tab:"events", el:"btnJobEvent"},
     gen_local_tax:{tab:"events", el:"btnGenLocalTax"},
@@ -4801,33 +4826,76 @@ function calcInventoryValue(){ const cat=LEDGER_CATALOG[state.jobs[state.jobInde
 /* Mission system */
 function currentWeekIndex(){
   if(state.weekEngine && state.weekEngine.active) return state.weekEngine.week;
-  return state.day;
+  return 0;
 }
 
 function buildMonthMissionSteps(){
-  const job = state.jobs[state.jobIndex];
   const steps = [
     {
-      title:"Month 1: Choose bank + insurance",
+      id:'setup_lock_budget',
+      title:'Setup Step 1: Lock Budget Rule',
+      bucket:[7,12],
+      prompt:`Choose the budget style for the whole year and lock it in.
+
+Required:
+• Tap "Apply Suggested Budget Rule" or your locked plan action`,
+      requireActions:['apply_plan']
+    },
+    {
+      id:'setup_choose_job',
+      title:'Setup Step 2: Choose Job',
+      bucket:[6,12],
+      prompt:`Pick the job you want for this school year.
+
+Required:
+• Use the job arrows if needed
+• Tap "Lock Job After Your Choice ✓"`,
+      requireActions:['choose_job']
+    },
+    {
+      id:'setup_finalize_wants',
+      title:'Setup Step 3: Finalize Wants / Starting Items',
+      bucket:[3,12],
+      prompt:`Choose wants and starting items for your plan.
+
+Required:
+• Build wants to the target
+• Tap "Add Wants to Plan"`,
+      requireActions:['finalize_wants']
+    },
+    {
+      id:'setup_bank_insurance',
+      title:'Setup Step 4: Choose Bank + Insurance',
       bucket:[1,6,12,3],
       prompt:`Choose your checking account, savings account, and insurance.
 
 Required:
 • Tap "Choose Bank + Insurance (Start)" (Banking tab)`,
-      requireActions:["startup_choose"]
+      requireActions:['startup_choose']
     },
     {
-      title:"Month 1: Set Savings Challenge Goal",
+      id:'setup_savings_goal',
+      title:'Setup Step 5: Set Savings Goal',
       bucket:[12,3],
       prompt:`Pick a year-end savings goal.
 
 Required:
 • Tap "Savings Challenge" (Plan tab) and set a goal`,
-      requireActions:["savings_goal"]
+      requireActions:['savings_goal']
+    },
+    {
+      id:'setup_stock_supplies',
+      title:'Setup Step 6: Stock up supplies',
+      bucket:[3,1],
+      prompt:`Buy at least one supply item for your job before Week 1 begins.
+
+Required:
+• Buy ONE item in the Ledger tab`,
+      requireActions:['ledger_buy']
     },
   ];
 
-  for(let m=1; m<=12; m++){
+  for(let m=2; m<=12; m++){
     if(m % 2 === 1){
       steps.push({
         title:`Month ${m}: Stock up supplies`,
@@ -4836,7 +4904,7 @@ Required:
 
 Required:
 • Buy ONE item in the Ledger tab`,
-        requireActions:["ledger_buy"]
+        requireActions:['ledger_buy']
       });
     } else {
       steps.push({
@@ -4846,67 +4914,64 @@ Required:
 
 Required:
 • Run Job Real-Life Event`,
-        requireActions:["job_event"]
+        requireActions:['job_event']
       });
     }
 
     if(m===2){
-      steps.push({ title:"Month 2: Move money to savings", bucket:[1,12], prompt:`Show the student how moving money changes growth.
+      steps.push({ title:'Month 2: Move money to savings', bucket:[1,12], prompt:`Show the student how moving money changes growth.
 
 Required:
-• Transfer money from checking to savings`, requireActions:["transfer_savings"] });
+• Transfer money from checking to savings`, requireActions:['transfer_savings'] });
     }
     if(m===3){
-      steps.push({ title:"Month 3: Inheritance lesson", bucket:[5,3], prompt:`Required:
-• Trigger Inheritance and choose an option.`, requireActions:["inheritance"] });
+      steps.push({ title:'Month 3: Inheritance lesson', bucket:[5,3], prompt:`Required:
+• Trigger Inheritance and choose an option.`, requireActions:['inheritance'] });
     }
     if(m===4){
-      steps.push({ title:"Month 4: Local tax lesson", bucket:[8,7], prompt:`Required:
-• Generate Local Tax (Lesson)
-• Pay Local Tax Bill`, requireActions:["gen_local_tax","pay_local_tax"] });
+      steps.push({ title:'Month 4: Local tax', bucket:[8], prompt:`Required:
+• Generate local tax
+• Pay local tax`, requireActions:['gen_local_tax','pay_local_tax'] });
     }
     if(m===5){
-      steps.push({ title:"Month 5: Open a CD", bucket:[9,12], prompt:`Open a CD and explain the term length.
+      steps.push({ title:'Month 5: Contract choice', bucket:[10,13], prompt:`Practice subscriptions and contracts.
 
 Required:
-• Open CD`, requireActions:["open_cd"] });
+• Open a contract
+• Review it`, requireActions:['contract_pick','review_contract'] });
     }
     if(m===6){
-      steps.push({ title:"Month 6: Billing dispute", bucket:[11,13], prompt:`Required:
-• Start Billing Dispute and choose an action.`, requireActions:["dispute"] });
+      steps.push({ title:'Month 6: Billing dispute', bucket:[11,13], prompt:`Required:
+• Use billing dispute`, requireActions:['dispute'] });
+    }
+    if(m===7){
+      steps.push({ title:'Month 7: Open a CD', bucket:[9,12], prompt:`Required:
+• Open a CD in Banking`, requireActions:['open_cd'] });
     }
     if(m===8){
-      steps.push({ title:"Month 8: Contract review", bucket:[10,13], prompt:`Pick one contract from the dropdown and review it.
-
-Required:
-• Review Selected Contract`, requireActions:["contract_pick","review_contract"] });
+      steps.push({ title:'Month 8: Review Budget Sheet', bucket:[12,3], prompt:`Required:
+• Open the Budget Sheet tab`, requireActions:['view_budget_sheet'], weekReview:32 });
     }
     if(m===9){
-      steps.push({ title:"Month 9: Transfer more savings", bucket:[1,12], prompt:`Move more money from checking to savings.
-
-Required:
-• Transfer money from checking to savings`, requireActions:["transfer_savings"] });
+      steps.push({ title:'Month 9: Review or adjust contract', bucket:[10,13], prompt:`Required:
+• Open contract and review`, requireActions:['review_contract'] });
     }
     if(m===10){
-      steps.push({ title:"Month 10: Write a check", bucket:[2,1], prompt:`Show money movement with a check.
+      steps.push({ title:'Month 10: Write a check', bucket:[2,1], prompt:`Show money movement with a check.
 
 Required:
-• Write Check`, requireActions:["write_check"] });
+• Write a check`, requireActions:['write_check'] });
     }
     if(m===11){
-      steps.push({ title:"Month 11: Deposit a check", bucket:[1,2], prompt:`Bring money back into the account.
+      steps.push({ title:'Month 11: Deposit a check', bucket:[1,2], prompt:`Bring money back into the account.
 
 Required:
-• Deposit Check`, requireActions:["deposit_check"] });
+• Deposit a check`, requireActions:['deposit_check'] });
     }
-
-    steps.push({
-      title:`Month ${m}: Advance to next week`,
-      bucket:[9,12],
-      prompt:`Tap "Next Week ▶" to advance. Interest, fees, growth, and credit effects apply when the month turns.`,
-      requireActions:["next_week"]
-    });
-
+    if(m===12){
+      steps.push({ title:'Month 12: Final Budget Sheet review', bucket:[12,3], prompt:`Required:
+• Open the Budget Sheet tab for your final review`, requireActions:['view_budget_sheet'], weekReview:48 });
+    }
   }
   return steps;
 }
@@ -4941,6 +5006,12 @@ function startMission(){
     openTab("plan");
     showBanner("Choose and lock the year plan first");
     guidePreStart();
+    return;
+  }
+  if(!state.jobLocked){
+    beep("warn");
+    openTab("job");
+    showBanner("Choose and lock your job first");
     return;
   }
   if(!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()){
@@ -4980,8 +5051,9 @@ function startMission(){
 
   state.mission.active=true;
   state.mission.paused=false;
-  state.mission.index=0;
   state.mission.steps = buildMonthMissionSteps();
+  state.mission.steps.forEach((step, idx)=>{ if(idx < 3){ step._done = new Set(step.requireActions || []); } });
+  state.mission.index=3;
   state.mission.waitingAction=null;
   initWeekEngine();
   renderWeekHeader();
@@ -5010,7 +5082,7 @@ function startMission(){
   state.standardV1.chainHistory = [];
   state.standardV1.chainWindowsFired = {};
 
-  setLog("Year mission started! June Week 1 — follow the glowing actions. Health and choice echoes are now live.");
+  setLog("Setup started. Follow the steps in order, then Week 1 will begin after you stock supplies.");
   setTimeout(()=>promptWeeklyGoalIfNeeded(null, {jumpToBankAfterPick:true}), 200);
   renderAll();
   runCurrentMissionStep();
@@ -5198,6 +5270,20 @@ function notifyAction(action){
     setLog(`✅ Completed: ${completedStep.title}`);
     m.index += 1;
     m.waitingAction=null;
+
+    if(step.id === 'setup_stock_supplies'){
+      if(state.weekEngine) state.weekEngine.active = true;
+      renderWeekHeader();
+      renderProgress();
+      applyLockRules();
+      showBanner('Week 1 begins now');
+      setLog('Setup complete. Week 1 is live. Finish your scenario chain, then tap Next Week to move to Week 2.');
+      setTimeout(()=>{
+        startWeeklyStudentFlow(()=>{ renderAll(); renderSheet(); });
+      }, 220);
+      return;
+    }
+
     renderProgress();
     applyLockRules();
     setTimeout(()=>runCurrentMissionStep(), 220);
@@ -5984,7 +6070,7 @@ function applyPlan(){
     notifyAction("apply_plan");
   } else {
     state.plan.wantsCommitted = false;
-    setLog(`${getBudgetModelName()} locked with payroll tax set at ${state.plan.taxPct}%. Benchmark #7 checked off. Step 2: choose a student job, then build wants and start the year mission.`);
+    setLog(`${getBudgetModelName()} locked with payroll tax set at ${state.plan.taxPct}%. Setup Step 1 complete. Next: choose a student job, then finalize wants and start the setup flow.`);
     showBanner(`Year plan locked. Payroll tax set to ${state.plan.taxPct}% for the year.`);
   }
   beep("success");
@@ -7249,6 +7335,7 @@ function addWantExtra(){
   updateWantsUI();
   addLedgerLine(`Wants locked: ${money(total)} — ${state.plan.wantsSelections.map(w=>w.label).join(', ')}`);
   showBanner("Wants committed! ✓");
+  notifyAction("finalize_wants");
 
   // If there's a pending monthly refresh callback, fire it now
   if(state._wantsRefreshCallback){
@@ -8027,8 +8114,7 @@ function selectConfiguration(role='teacher', experience='standard'){
       sessionStorage.setItem('wglt_jr_role', role);
       sessionStorage.setItem('wglt_jr_experience', experience);
     }catch(e){}
-    window.location.href = './budget-boss-jr.html?teacher=' + (role === 'teacher' ? '1' : '0') + '&role=' + encodeURIComponent(role) + '&experience=' + encodeURIComponent(experience);
-    return;
+    // Phase 5: keep Beginner inside the same 48-week engine instead of redirecting to the 12-week Jr app.
   }
   if($("modeSelectScreen")) $("modeSelectScreen").style.display = "none";
   state.presentationRole = role;
@@ -8411,7 +8497,8 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     state.jobLocked = true;
     beep("success");
     showBanner(job.name + " selected and locked!");
-    setLog("Job locked: " + job.name + ". Now build your wants and tap Start Year Mission.");
+    setLog("Job locked: " + job.name + ". Setup Step 2 complete. Next: finalize wants and starting items. Then tap Start Year Mission for bank, savings goal, and supply setup.");
+    notifyAction("choose_job");
     guideWantsStep();
     scrollToBtn("btnAddWant");
   };
@@ -9113,7 +9200,11 @@ function playScenarioFoundationScenario(picked, category){
         buttons:[{id:'ok',label:'Continue',kind:'primary'}],
         onPick: ()=> {
           renderAll();
-          if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
+          if(state && state.ui && typeof state.ui._scenarioChainNext === 'function'){
+              const chainNext = state.ui._scenarioChainNext;
+              delete state.ui._scenarioChainNext;
+              setTimeout(()=>chainNext(), 0);
+            } else if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
         }
       });
     }
@@ -9164,6 +9255,29 @@ try{
     window.WGLT_DEBUG.listLifeScenarios = function(){
       return getScenarioFoundationPacksByCategory('real_life').map(sc => ({ id: sc.id, title: sc.title }));
     };
+    window.WGLT_DEBUG.listFinancialScenarios = function(){
+      return getScenarioFoundationPacksByCategory('financial').map(sc => ({ id: sc.id, title: sc.title }));
+    };
+    window.WGLT_DEBUG.listOpportunityScenarios = function(){
+      return getScenarioFoundationPacksByCategory('opportunity').map(sc => ({ id: sc.id, title: sc.title }));
+    };
+    window.WGLT_DEBUG.inspectScenarioCoverage = function(){
+      const jobs = (window.WGLT_DATA && window.WGLT_DATA.jobs) || [];
+      const byCat = {
+        real_life: getScenarioFoundationPacksByCategory('real_life'),
+        financial: getScenarioFoundationPacksByCategory('financial'),
+        opportunity: getScenarioFoundationPacksByCategory('opportunity')
+      };
+      return jobs.map(job => ({
+        job: job.id,
+        real_life: byCat.real_life.filter(sc => (sc.jobs||[]).includes('all') || (sc.jobs||[]).includes(job.id)).length,
+        financial: byCat.financial.filter(sc => (sc.jobs||[]).includes('all') || (sc.jobs||[]).includes(job.id)).length,
+        opportunity: byCat.opportunity.filter(sc => (sc.jobs||[]).includes('all') || (sc.jobs||[]).includes(job.id)).length
+      }));
+    };
+    window.WGLT_DEBUG.runWeekScenarioChain = function(){
+      return runWeeklyScenarios((state.weekEngine && state.weekEngine.week) || 1, function(){ console.log('Scenario chain done'); });
+    };
   }
 }catch(err){}
 
@@ -9172,17 +9286,22 @@ const __legacyRunFinancialDecision = runFinancialDecision;
 const __legacyRunJobRealLifeEvent = runJobRealLifeEvent;
 
 runLifeScenarioDecision = function(){
-  return runScenarioFoundationCategory('real_life', __legacyRunLifeScenarioDecision);
+  return runScenarioFoundationCategory('real_life');
 };
 runFinancialDecision = function(){
   const useEliteCredit = isEliteExperience() && Math.random() < 0.25;
-  return runScenarioFoundationCategory(useEliteCredit ? 'elite_credit' : 'financial', __legacyRunFinancialDecision);
+  return runScenarioFoundationCategory(useEliteCredit ? 'elite_credit' : 'financial');
 };
 runJobRealLifeEvent = function(afterDone){
   if(state && state.ui && state.ui.forceWeeklySupplyDecision){
     return __legacyRunJobRealLifeEvent(afterDone);
   }
-  return runScenarioFoundationCategory('opportunity', __legacyRunJobRealLifeEvent, afterDone);
+  if(!state.ui) state.ui = {};
+  state.ui._scenarioChainNext = typeof afterDone === 'function' ? afterDone : null;
+  return runScenarioFoundationCategory('opportunity', ()=>{
+    delete state.ui._scenarioChainNext;
+    if(typeof afterDone === 'function') afterDone();
+  });
 };
 
 
@@ -9831,7 +9950,11 @@ function getChoicePreviewForCurrentJob(choice){
           buttons:[{id:'ok',label:'Continue',kind:'primary'}],
           onPick: ()=> {
             renderAll();
-            if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
+            if(state && state.ui && typeof state.ui._scenarioChainNext === 'function'){
+              const chainNext = state.ui._scenarioChainNext;
+              delete state.ui._scenarioChainNext;
+              setTimeout(()=>chainNext(), 0);
+            } else if(typeof notifyAction === 'function') notifyAction(category === 'opportunity' ? 'job_event' : 'weekly');
           }
         });
       }
