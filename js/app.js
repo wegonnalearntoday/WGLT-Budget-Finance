@@ -10254,8 +10254,8 @@ Required:
   function getBenchmarkFocusText(week){
     const ids = getMonthlyBenchmarkFocus(week);
     if(!ids.length) return 'Focus benchmarks this month will show up during weekly choices.';
-    return ids.map(id => `Benchmark #${id}: ${BENCH[id] || ''}`.trim()).join('
-');
+    if(!ids.length) return 'Focus benchmarks this month will show up during weekly choices.';
+    return ids.map(id => `Benchmark #${id}: ${BENCH[id] || ''}`.trim()).join('\n');
   }
 
   function ensureWeeklyFlowState(){
