@@ -752,26 +752,7 @@ function renderSharedProfileBadge(){
 }
 
 let decisionBadgeTimer = null;
-function showDecisionBadge(text){
-  const box = document.getElementById('decisionBadge');
-  const label = document.getElementById('decisionBadgeText');
-  if(!box || !label || !text) return;
-  label.textContent = text;
-  box.style.display = 'inline-flex';
-  box.style.position = 'fixed';
-  box.style.left = '50%';
-  box.style.top = '25vh';
-  box.style.bottom = 'auto';
-  box.style.transform = 'translateX(-50%)';
-  box.style.pointerEvents = 'none';
-  box.style.zIndex = '10005';
-  box.classList.add('show');
-  clearTimeout(decisionBadgeTimer);
-  decisionBadgeTimer = setTimeout(()=>{
-    box.classList.remove('show');
-    box.style.display = 'none';
-  }, 1200);
-}
+function showDecisionBadge(text){ return; }
 function formatSourceLabel(src){
   if(src === 'cd') return 'CD';
   if(src === 'hysa') return 'HYSA';
@@ -7343,7 +7324,7 @@ function runJobRealLifeEvent(afterDone){
   if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
   state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
   state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-  const itemName=pair[0], itemId=pair[1], rushCost=pair[2];
+  const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(Math.max(0, baseCost) + 3);
   const haveIt = invQty(itemId) > 0;
   const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -10196,8 +10177,8 @@ Required:
         title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
         bucket:[9,12],
         prompt: isFirst
-          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`
-          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`,
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, credit effects, benchmark check-ins, wants moments, and hook follow-through\n• Benchmark check-ins and coverage progress during the year`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, credit effects, benchmark check-ins, wants moments, and hook follow-through\n• Benchmark check-ins and coverage progress during the year`,
         requireActions:["next_week"],
         phase:"year",
         weekNumber:w
@@ -10264,7 +10245,7 @@ Required:
     openModal({
       title:`🎲 Week ${w}: Run Random Events`,
       meta:`${monthName || 'Weekly Flow'} • Benchmarks + event practice`,
-      body:`Run the glowing \"Run Random Event\" button this week.\n\nRequired this week: ${wr.target} event${wr.target===1?'':'s'}\nCompleted: ${wr.done}\nRemaining: ${remaining}\n\nNo less than 1 and no more than 3 random events are required each week.`,
+      body:`Run the glowing \"Run Random Event\" button this week.\n\nRequired this week: ${wr.target} event${wr.target===1?'':'s'}\nCompleted: ${wr.done}\nRemaining: ${remaining}\n\nNo less than 1 and no more than 3 random events are required each week.\n\nThese weekly actions also help drive wants moments, benchmark coverage, and hooks through the year.`,
       buttons:[{id:'go', label:'Go to Run Random Event →', kind:'primary'}],
       onPick:()=>{
         openTab('events', {auto:true});
@@ -10312,7 +10293,7 @@ Required:
     const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
     const result = __origAddCoverage.apply(this, arguments);
     if(!had){
-      showBanner(`Benchmark #${b} covered`);
+      setTimeout(()=>{ try{ openModal({ title:`✅ Benchmark Covered`, meta:`Benchmark #${b}`, body:`Great work. You just covered Benchmark #${b}.`, buttons:[{id:'ok',label:'Continue',kind:'primary'}], onPick:()=>{} }); }catch(err){ showBanner(`Benchmark #${b} covered`); } }, 120);
     }
     return result;
   };
@@ -10344,7 +10325,7 @@ Required:
     }
     const res = __origNotifyAction.apply(this, arguments);
     const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
-    const weeklyCountActions = new Set(['job_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','inheritance','dispute','review_contract','contract_pick']);
+    const weeklyCountActions = new Set(['job_event','weekly','life_event','financial_event','school_event','social_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','inheritance','dispute','review_contract','contract_pick']);
     if(wr && wr.awaitingResolution && weeklyCountActions.has(action)){
       completeWeeklyRandomEvent();
     }
@@ -10386,6 +10367,27 @@ Required:
       wr.done = 0;
       wr.active = true;
       wr.awaitingResolution = false;
+      const wantsChance = Math.random() < 0.35;
+      if(wantsChance && typeof runSocialDecision === 'function') {
+        setTimeout(()=>{
+          try{
+            openModal({
+              title:`🎯 Weekly Wants + Hooks`,
+              meta:`Week ${week} • Optional pressure / wants moment`,
+              body:`This week may include a wants moment or hook consequence depending on your earlier choices and budget plan.`,
+              buttons:[{id:'go',label:'Continue to Events',kind:'primary'}],
+              onPick:()=>{
+                showWeeklyRandomPrompt();
+                if(typeof onAllDone === 'function') onAllDone();
+              }
+            });
+          }catch(err){
+            showWeeklyRandomPrompt();
+            if(typeof onAllDone === 'function') onAllDone();
+          }
+        }, 80);
+        return;
+      }
       showWeeklyRandomPrompt();
       if(typeof onAllDone === 'function') onAllDone();
     };
@@ -10396,7 +10398,7 @@ Required:
       openModal({
         title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
         meta:'Ledger restock for the month',
-        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nThis month also includes benchmark practice, wants moments, and hook/cause-effect follow-through as you play.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
