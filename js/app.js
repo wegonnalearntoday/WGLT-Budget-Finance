@@ -10557,3 +10557,105 @@ Required:
     });
   };
 })();
+
+
+/* ============================================================
+   PHASE 6.7 PATCH: weekly event counting + true Week 1 launch + toast position
+   ============================================================ */
+(function(){
+  const __prevShowDecisionBadge = showDecisionBadge;
+  showDecisionBadge = function(text){
+    const box = document.getElementById('decisionBadge');
+    const label = document.getElementById('decisionBadgeText');
+    if(!box || !label || !text) return;
+    label.textContent = text;
+    box.style.display = 'inline-flex';
+    box.style.position = 'fixed';
+    box.style.left = '50%';
+    box.style.top = '16vh';
+    box.style.bottom = 'auto';
+    box.style.transform = 'translateX(-50%)';
+    box.style.pointerEvents = 'none';
+    box.style.zIndex = '10005';
+    box.classList.add('show');
+    clearTimeout(window.__wgltDecisionBadgeTimer);
+    window.__wgltDecisionBadgeTimer = setTimeout(()=>{
+      box.classList.remove('show');
+      box.style.display = 'none';
+    }, 1200);
+  };
+
+  function __wgltEnsureWeeklyFlowState(){
+    if(!state.ui) state.ui = {};
+    if(!state.ui.weeklyRandom) state.ui.weeklyRandom = { week:0, target:0, done:0, active:false, awaitingResolution:false };
+    return state.ui.weeklyRandom;
+  }
+
+  const __prevNotifyAction2 = notifyAction;
+  notifyAction = function(action){
+    const res = __prevNotifyAction2.apply(this, arguments);
+    const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
+    const weeklyCountActions = new Set([
+      'job_event','weekly','transfer_savings','open_cd','write_check','deposit_check',
+      'pay_local_tax','inheritance','dispute','review_contract','contract_pick'
+    ]);
+    if(wr && wr.awaitingResolution && weeklyCountActions.has(action)){
+      wr.awaitingResolution = false;
+      wr.done = Math.min(Number(wr.target || 0), Number(wr.done || 0) + 1);
+      if(wr.done < wr.target){
+        const remaining = wr.target - wr.done;
+        showBanner(`Random event complete • ${wr.done}/${wr.target}`);
+        state.mission.waitingAction = 'job_event';
+        applyLockRules();
+        setTimeout(()=>{
+          openModal({
+            title:`✅ Event Complete`,
+            meta:`${wr.done}/${wr.target} finished this week`,
+            body:`Nice work. You still need ${remaining} more random event${remaining===1?'':'s'} this week.\n\nTap the glowing \"Run Random Event\" button again.`,
+            buttons:[{id:'go', label:'Run Another Event →', kind:'primary'}],
+            onPick:()=>{
+              openTab('events', {auto:true});
+              setTimeout(()=> scrollToBtn('btnRandomEvent'), 120);
+            }
+          });
+        }, 120);
+      } else {
+        wr.active = false;
+        state.mission.waitingAction = 'next_week';
+        applyLockRules();
+        showBanner(`Weekly events complete • ${wr.done}/${wr.target}`);
+        setTimeout(()=>{
+          openTab('plan', {auto:true});
+          setTimeout(()=> scrollToBtn('btnNextWeek'), 120);
+        }, 120);
+      }
+    }
+    return res;
+  };
+
+  const __prevNextWeek2 = nextWeek;
+  nextWeek = function(){
+    if(state.weekEngine && state.mission && state.mission.active){
+      if(!state.ui) state.ui = {};
+      const isSetupDone = state.plan && state.plan.lockedForYear && state.bank && state.bank.checkingType && state.bank.savingsType && state.savingsGoal && state.startup && state.startup.inventoryBought;
+      const shouldLaunchWeek1 = Number(state.weekEngine.week || 1) === 1
+        && !state.ui.firstWeekLaunched
+        && isSetupDone;
+      if(shouldLaunchWeek1){
+        state.ui.firstWeekLaunched = true;
+        addLedgerLine('--- Week 1 started ---');
+        state.ledger.weekExpenses = 0;
+        state.ledger.weekIncome = 0;
+        state.ledger.weekProfit = 0;
+        renderWeekHeader();
+        startWeeklyStudentFlow(()=>{
+          renderAll();
+          renderSheet();
+          notifyAction('next_week');
+        });
+        return;
+      }
+    }
+    return __prevNextWeek2.apply(this, arguments);
+  };
+})();
