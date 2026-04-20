@@ -3623,6 +3623,71 @@ function clearRandomEventPending(){
   state.ui.randomEventPendingType = null;
   state.ui.randomEventCycling = false;
 }
+function ensureWeeklyChallengeState(week){
+  if(!state.weekEngine) initWeekEngine();
+  if(!state.weekEngine.weeklyChallenge || Number(state.weekEngine.weeklyChallenge.week || 0) !== Number(week || state.weekEngine.week || 1)){
+    const target = 2 + Math.floor(Math.random()*3); // 2 to 4
+    state.weekEngine.weeklyChallenge = {
+      week: Number(week || state.weekEngine.week || 1),
+      supplyPromptWeek: Number(week || state.weekEngine.week || 1) % 2 === 1,
+      supplyHandled: false,
+      randomTarget: target,
+      randomDone: 0,
+      active: true,
+      introShown: false,
+      doneShown: false
+    };
+  }
+  return state.weekEngine.weeklyChallenge;
+}
+function promptWeeklyChallengeIntro(){
+  const wk = ensureWeeklyChallengeState(state.weekEngine ? state.weekEngine.week : 1);
+  if(wk.introShown) return;
+  wk.introShown = true;
+  openModal({
+    title:`🎲 Week ${wk.week}: Run Random Event (${getDynamicRandomEventWeights().life||40}/${getDynamicRandomEventWeights().job||40}/${getDynamicRandomEventWeights().financial||20})`,
+    meta:'Benchmark #3 • Benchmark #6 • Benchmark #12',
+    body:`Run Random Event ${wk.randomTarget} times this week.
+
+Required:
+• Tap "Run Random Event" in the Events tab
+• Complete the glowing event each time
+
+This week target: ${wk.randomTarget} random events.`,
+    buttons:[{id:'go', label:'Go to Events Tab →', kind:'primary'}],
+    onPick:()=>{
+      openTab('events');
+      setTimeout(()=>scrollToBtn('btnRandomEvent'), 120);
+      showBanner(`Week ${wk.week}: ${wk.randomDone}/${wk.randomTarget} random events done`);
+    }
+  });
+}
+function recordRandomEventCompletion(sourceType){
+  const wk = ensureWeeklyChallengeState(state.weekEngine ? state.weekEngine.week : 1);
+  if(!wk.active) return;
+  wk.randomDone = Math.min(Number(wk.randomTarget || 0), Number(wk.randomDone || 0) + 1);
+  if(sourceType === 'life') addCoverage(6);
+  else if(sourceType === 'job') addCoverage(3);
+  else if(sourceType === 'financial'){ addCoverage(12); addCoverage(9); }
+  const left = Math.max(0, Number(wk.randomTarget || 0) - Number(wk.randomDone || 0));
+  if(left > 0){
+    showBanner(`Nice. ${wk.randomDone}/${wk.randomTarget} random events done this week.`);
+    setTimeout(()=>{ openTab('events'); scrollToBtn('btnRandomEvent'); }, 120);
+    return;
+  }
+  if(!wk.doneShown){
+    wk.doneShown = true;
+    openModal({
+      title:`✅ Week ${wk.week}: Random Event Goal Complete`,
+      meta:'Weekly event target reached',
+      body:`You completed ${wk.randomTarget} random events this week.
+
+You can keep working in the app, or tap Next Week when you're ready.`,
+      buttons:[{id:'ok', label:'Got it', kind:'primary'}],
+      onPick:()=>{ renderAll(); }
+    });
+  }
+}
 function applyRandomEventButtonState(){
   if(!state.ui) return;
 
@@ -6170,25 +6235,33 @@ function applyWeeklyBankEffects(){
 
 /* Next week (48-week engine) */
 function startWeeklyStudentFlow(onAllDone){
+  const week = state.weekEngine ? state.weekEngine.week : currentWeekIndex();
+  const challenge = ensureWeeklyChallengeState(week);
   const launchRandomPhase = ()=>{
     if(typeof runWeeklyScenarios === 'function'){
-      runWeeklyScenarios(state.weekEngine ? state.weekEngine.week : currentWeekIndex(), ()=>{
+      runWeeklyScenarios(week, ()=>{
+        promptWeeklyChallengeIntro();
         if(typeof onAllDone === 'function') onAllDone();
       });
-    } else if(typeof onAllDone === 'function'){
-      onAllDone();
+    } else {
+      promptWeeklyChallengeIntro();
+      if(typeof onAllDone === 'function') onAllDone();
     }
   };
 
-  // Student flow: always show the weekly job supply/inventory decision first,
-  // then continue into the normal random-event steps.
   setTimeout(()=>{
     if(!state.ui) state.ui = {};
-    state.ui.forceWeeklySupplyDecision = true;
-    runJobRealLifeEvent(()=>{
-      state.ui.forceWeeklySupplyDecision = false;
-      setTimeout(launchRandomPhase, 150);
-    });
+    if(challenge.supplyPromptWeek && !challenge.supplyHandled){
+      state.ui.forceWeeklySupplyDecision = true;
+      runJobRealLifeEvent(()=>{
+        state.ui.forceWeeklySupplyDecision = false;
+        challenge.supplyHandled = true;
+        setTimeout(launchRandomPhase, 150);
+      });
+      return;
+    }
+    challenge.supplyHandled = true;
+    launchRandomPhase();
   }, 180);
 }
 
@@ -6238,6 +6311,22 @@ function nextWeek(){
     return;
   }
   if(state.weekEngine && state.mission.active){
+    const weeklyChallenge = ensureWeeklyChallengeState(state.weekEngine.week || 1);
+    if(Number(weeklyChallenge.randomDone || 0) < Number(weeklyChallenge.randomTarget || 0)){
+      beep("warn");
+      openModal({
+        title:`🎲 Week ${weeklyChallenge.week}: Finish Random Events First`,
+        meta:'Required before advancing',
+        body:`You need ${Math.max(0, Number(weeklyChallenge.randomTarget || 0) - Number(weeklyChallenge.randomDone || 0))} more random event(s) this week.
+
+Required:
+• Tap "Run Random Event" in the Events tab
+• Complete the glowing event each time`,
+        buttons:[{id:'go', label:'Go to Events Tab →', kind:'primary'}],
+        onPick:()=>{ openTab('events'); setTimeout(()=>scrollToBtn('btnRandomEvent'), 120); }
+      });
+      return;
+    }
     const currentW = state.weekEngine.week;
     if(currentW >= 48){
       renderAll();
@@ -8509,7 +8598,10 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     applyLockRules();
     runJobRealLifeEvent();
     maybeTriggerEliteScenario("job");
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){
+      recordRandomEventCompletion("job");
+      showBanner("Nice. You played the randomly selected event.");
+    }
   };
   if($("btnSchoolEvent")) $("btnSchoolEvent").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "life") return;
@@ -8518,7 +8610,10 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     applyLockRules();
     runLifeScenarioDecision();
     maybeTriggerEliteScenario("life");
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){
+      recordRandomEventCompletion("life");
+      showBanner("Nice. You played the randomly selected event.");
+    }
   };
   if($("btnSocialEvent")) $("btnSocialEvent").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "financial") return;
@@ -8527,7 +8622,10 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     applyLockRules();
     runFinancialDecision();
     maybeTriggerEliteScenario("financial");
-    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+    if(hadPending){
+      recordRandomEventCompletion("financial");
+      showBanner("Nice. You played the randomly selected event.");
+    }
   };
   if($("btnRandomEvent")) $("btnRandomEvent").onclick=()=> runRandomEvent();
 
