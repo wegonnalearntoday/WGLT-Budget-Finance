@@ -758,12 +758,19 @@ function showDecisionBadge(text){
   if(!box || !label || !text) return;
   label.textContent = text;
   box.style.display = 'inline-flex';
+  box.style.position = 'fixed';
+  box.style.left = '50%';
+  box.style.top = '25vh';
+  box.style.bottom = 'auto';
+  box.style.transform = 'translateX(-50%)';
+  box.style.pointerEvents = 'none';
+  box.style.zIndex = '10005';
   box.classList.add('show');
   clearTimeout(decisionBadgeTimer);
   decisionBadgeTimer = setTimeout(()=>{
     box.classList.remove('show');
     box.style.display = 'none';
-  }, 2600);
+  }, 1200);
 }
 function formatSourceLabel(src){
   if(src === 'cd') return 'CD';
@@ -10336,7 +10343,9 @@ Required:
       }
     }
     const res = __origNotifyAction.apply(this, arguments);
-    if(action === 'job_event' && state.ui && state.ui.weeklyRandom && state.ui.weeklyRandom.awaitingResolution){
+    const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
+    const weeklyCountActions = new Set(['job_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','inheritance','dispute','review_contract','contract_pick']);
+    if(wr && wr.awaitingResolution && weeklyCountActions.has(action)){
       completeWeeklyRandomEvent();
     }
     return res;
