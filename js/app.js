@@ -10228,3 +10228,323 @@ Required:
     return result;
   };
 })();
+
+
+/* ============================================================
+   PHASE 6.5 PATCH: weekly random events, monthly ledger restock,
+   rush pricing, and visible benchmark feedback
+   ============================================================ */
+(function(){
+  function isFirstWeekOfMonth(week){
+    const w = Number(week || (state.weekEngine && state.weekEngine.week) || 1);
+    if(w <= 1) return true;
+    return weekToMonth(w) !== weekToMonth(w - 1);
+  }
+
+  function ensureWeeklyFlowState(){
+    if(!state.ui) state.ui = {};
+    if(!state.ui.weeklyRandom) state.ui.weeklyRandom = { week:0, target:0, done:0, active:false, awaitingResolution:false };
+    return state.ui.weeklyRandom;
+  }
+
+  function showWeeklyRandomPrompt(){
+    const wr = ensureWeeklyFlowState();
+    const remaining = Math.max(0, Number(wr.target || 0) - Number(wr.done || 0));
+    state.mission.waitingAction = 'job_event';
+    applyLockRules();
+    const w = Number((state.weekEngine && state.weekEngine.week) || 1);
+    const monthName = typeof weekToMonthName === 'function' ? weekToMonthName(w) : '';
+    openModal({
+      title:`🎲 Week ${w}: Run Random Events`,
+      meta:`${monthName || 'Weekly Flow'} • Benchmarks + event practice`,
+      body:`Run the glowing \"Run Random Event\" button this week.\n\nRequired this week: ${wr.target} event${wr.target===1?'':'s'}\nCompleted: ${wr.done}\nRemaining: ${remaining}\n\nNo less than 1 and no more than 3 random events are required each week.`,
+      buttons:[{id:'go', label:'Go to Run Random Event →', kind:'primary'}],
+      onPick:()=>{
+        openTab('events', {auto:true});
+        setTimeout(()=> scrollToBtn('btnRandomEvent'), 120);
+      }
+    });
+  }
+
+  function completeWeeklyRandomEvent(){
+    const wr = ensureWeeklyFlowState();
+    if(!wr.active || !wr.awaitingResolution) return;
+    wr.awaitingResolution = false;
+    wr.done = Math.min(Number(wr.target || 0), Number(wr.done || 0) + 1);
+    if(wr.done < wr.target){
+      const remaining = wr.target - wr.done;
+      showBanner(`Random event complete • ${wr.done}/${wr.target}`);
+      state.mission.waitingAction = 'job_event';
+      applyLockRules();
+      setTimeout(()=>{
+        openModal({
+          title:`✅ Event Complete`,
+          meta:`${wr.done}/${wr.target} finished this week`,
+          body:`Nice work. You still need ${remaining} more random event${remaining===1?'':'s'} this week.\n\nTap the glowing \"Run Random Event\" button again.`,
+          buttons:[{id:'go', label:'Run Another Event →', kind:'primary'}],
+          onPick:()=>{
+            openTab('events', {auto:true});
+            setTimeout(()=> scrollToBtn('btnRandomEvent'), 120);
+          }
+        });
+      }, 120);
+      return;
+    }
+    wr.active = false;
+    state.mission.waitingAction = 'next_week';
+    applyLockRules();
+    showBanner(`Weekly events complete • ${wr.done}/${wr.target}`);
+    setTimeout(()=>{
+      openTab('plan', {auto:true});
+      setTimeout(()=> scrollToBtn('btnNextWeek'), 120);
+    }, 120);
+  }
+
+  const __origAddCoverage = addCoverage;
+  addCoverage = function(b){
+    const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
+    const result = __origAddCoverage.apply(this, arguments);
+    if(!had){
+      showBanner(`Benchmark #${b} covered`);
+    }
+    return result;
+  };
+
+  const __origRunRandomEvent = runRandomEvent;
+  runRandomEvent = function(){
+    const wr = ensureWeeklyFlowState();
+    if(wr.active && wr.done >= wr.target){
+      beep('warn');
+      showBanner('This week\'s random events are already complete');
+      openTab('plan', {auto:true});
+      setTimeout(()=>scrollToBtn('btnNextWeek'), 120);
+      return;
+    }
+    wr.awaitingResolution = true;
+    return __origRunRandomEvent.apply(this, arguments);
+  };
+
+  const __origNotifyAction = notifyAction;
+  notifyAction = function(action){
+    if(action === 'ledger_buy' && state.ui && state.ui.monthlyRestockPending){
+      state.ui.monthlyRestockPending = false;
+      const cb = state.ui.monthlyRestockCallback;
+      state.ui.monthlyRestockCallback = null;
+      showBanner('Monthly restock complete');
+      if(typeof cb === 'function'){
+        setTimeout(cb, 120);
+      }
+    }
+    const res = __origNotifyAction.apply(this, arguments);
+    if(action === 'job_event' && state.ui && state.ui.weeklyRandom && state.ui.weeklyRandom.awaitingResolution){
+      completeWeeklyRandomEvent();
+    }
+    return res;
+  };
+
+  const __origNextWeek = nextWeek;
+  nextWeek = function(){
+    const wr = ensureWeeklyFlowState();
+    if(wr.active && wr.done < wr.target){
+      beep('warn');
+      showWeeklyRandomPrompt();
+      return;
+    }
+    if(state.ui && state.ui.monthlyRestockPending){
+      beep('warn');
+      openModal({
+        title:'📒 Month Start: Restock in Ledger',
+        meta:'Required before the week continues',
+        body:'At the beginning of each month, go to the Ledger and restock one item for the month.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
+        onPick:()=>{
+          openTab('ledger', {auto:true});
+          setTimeout(()=> scrollToBtn('btnLedgerBuy'), 120);
+        }
+      });
+      return;
+    }
+    return __origNextWeek.apply(this, arguments);
+  };
+
+  startWeeklyStudentFlow = function(onAllDone){
+    if(!state.ui) state.ui = {};
+    const week = Number((state.weekEngine && state.weekEngine.week) || 1);
+    const afterRestock = ()=>{
+      const wr = ensureWeeklyFlowState();
+      wr.week = week;
+      wr.target = 1 + Math.floor(Math.random() * 3);
+      wr.done = 0;
+      wr.active = true;
+      wr.awaitingResolution = false;
+      showWeeklyRandomPrompt();
+      if(typeof onAllDone === 'function') onAllDone();
+    };
+
+    if(isFirstWeekOfMonth(week)){
+      state.ui.monthlyRestockPending = true;
+      state.ui.monthlyRestockCallback = afterRestock;
+      openModal({
+        title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
+        meta:'Ledger restock for the month',
+        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
+        onPick:()=>{
+          openTab('ledger', {auto:true});
+          setTimeout(()=> scrollToBtn('btnLedgerBuy'), 120);
+        }
+      });
+      return;
+    }
+    afterRestock();
+  };
+
+  runJobRealLifeEvent = function(afterDone){
+    const job = state.jobs[state.jobIndex];
+    const month = currentWeekIndex();
+
+    function useInventoryOrPay(itemId, fallbackCost, itemName, onDone){
+      if(invQty(itemId)>0){
+        setInvQty(itemId, invQty(itemId)-1);
+        const invVal = calcInventoryValue();
+        addLedgerLine(`Used inventory: ${itemName} (free) | Inv. value: ${money(invVal)}`);
+        renderHeader();
+        renderLedger();
+        onDone && onDone(true);
+        recalcProfit();
+        notifyAction("job_event");
+        if(typeof afterDone === "function") setTimeout(afterDone, 120);
+        return;
+      }
+      chooseFundingSource(fallbackCost, `No ${itemName} in inventory.\nRush price: ${money(fallbackCost)}. Choose where to pay from:`, (src)=>{
+        state.ledger.weekExpenses += fallbackCost;
+        const invVal = calcInventoryValue();
+        addLedgerLine(`Rush buy & used: ${itemName} -${money(fallbackCost)} from ${src} | Inv. value: ${money(invVal)}`);
+        renderHeader();
+        renderLedger();
+        onDone && onDone(false);
+        recalcProfit();
+        notifyAction("job_event");
+        if(typeof afterDone === "function") setTimeout(afterDone, 120);
+      });
+    }
+
+    const catalogPack = ((LEDGER_CATALOG[job.id] || LEDGER_CATALOG.lawn || [])
+      .filter(item => item && item.type === 'inventory')
+      .map(item => [item.name, item.id, Number(item.cost || 0)]));
+    const fallbackPacks={
+      babysitting:[['Snacks Pack','snacks',10],['Craft Kit','craft',12]],
+      pet:[['Pet Food','petfood',12],['Treats','treats',8]],
+      dogwalk:[['Rain Poncho','poncho',8],['Waste Bags','bags',7]],
+      lawn:[['Gas Can','gas',12],['Gloves','gloves',9],['Yard Bags','bags',8]],
+      cars:[['Car Soap','soap',11],['Wax','wax',13],['Microfiber Towels','towels',9]],
+      tutor:[['Flash Cards','cards',9],['Markers','markers',5]],
+      chores:[['Cleaning Spray','spray',7],['Sponges','sponges',6]],
+      errands:[['Bus Pass (1 ride)','fare',6],['Reusable Bag','bag',5]],
+      crafts:[['Craft Materials','materials',14],['Stickers Pack','stickers',8]]
+    };
+    const pack = catalogPack.length ? catalogPack : (fallbackPacks[job.id] || fallbackPacks.lawn);
+    if(!state.ui.lastRealLifeItemByJob) state.ui.lastRealLifeItemByJob = {};
+    if(!state.ui.recentRealLifeItemsByJob) state.ui.recentRealLifeItemsByJob = {};
+    const recent = Array.isArray(state.ui.recentRealLifeItemsByJob[job.id]) ? state.ui.recentRealLifeItemsByJob[job.id] : [];
+    let idx = Math.floor(Math.random() * pack.length);
+    if(pack.length > 1){
+      let guard = 0;
+      while((pack[idx][1] === state.ui.lastRealLifeItemByJob[job.id] || recent.includes(pack[idx][1])) && guard < 16){
+        idx = Math.floor(Math.random() * pack.length);
+        guard += 1;
+      }
+    }
+    const pair = pack[idx];
+    state.ui.lastRealLifeItemByJob[job.id] = pair[1];
+    if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
+    state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
+    state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
+    const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(baseCost + 3);
+    const haveIt = invQty(itemId) > 0;
+    const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
+
+    if(!bonus){
+      const leftHTML = `
+        <div style="margin-bottom:10px;padding:10px;background:var(--card-bg,#f8f9fa);border-radius:8px">
+          <div style="font-weight:bold;margin-bottom:4px">${itemName}</div>
+          <div style="color:${haveIt?'var(--success)':'var(--danger)'}">
+            ${haveIt ? `✅ You have ${invQty(itemId)} in inventory — use it FREE` : `❌ None in inventory — rush cost ${money(rushCost)}`}
+          </div>
+        </div>
+        <div style="font-size:13px">
+          <strong>Option A:</strong> Use ${itemName} from inventory (free if you have it, rush price if not)<br><br>
+          <strong>Option B:</strong> Buy it as a rush purchase for ${money(rushCost)} and add to inventory
+        </div>`;
+
+      openSplitShopModal({
+        title:`${job.name}: Supply Decision`,
+        leftTitle:"This Week's Decision",
+        leftHTML,
+        rightTitle:"Your Inventory",
+        rightHTML: buildInventoryPanel(),
+        buttons:[
+          { label:`Option A — Use ${itemName}${haveIt?' (FREE)':` (rush ${money(rushCost)})`}`,
+            kind: haveIt ? "success" : "warn",
+            onClick:()=>{
+              useInventoryOrPay(itemId, rushCost, itemName, hadInv=>{
+                if(hadInv){ state.plan.needs += 1; }
+                else { state.plan.wants = Math.max(0,state.plan.wants-1); }
+              });
+            }
+          },
+          { label:`Option B — Rush Buy & Stock ${itemName} (${money(rushCost)})`,
+            kind:"secondary",
+            onClick:()=>{
+              chooseFundingSource(rushCost, `Rush buy ${itemName} for ${job.name}.\nAdds to inventory.`, (src)=>{
+                setInvQty(itemId, invQty(itemId)+1);
+                state.ledger.weekExpenses += rushCost;
+                state.plan.needs += 1;
+                const invVal = calcInventoryValue();
+                addLedgerLine(`Rush stocked: ${itemName} -${money(rushCost)} from ${src} | Inv. value: ${money(invVal)}`);
+                recalcProfit();
+                renderHeader();
+                renderLedger();
+                notifyAction('job_event');
+                if(typeof afterDone === "function") setTimeout(afterDone, 120);
+              });
+            }
+          }
+        ]
+      });
+      return;
+    }
+
+    const leftHTML2 = `
+      <div style="font-size:13px">
+        <strong>Option A — Reinvest:</strong> Put money back into the job. Builds savings discipline (+$12 income, +$4 savings).<br><br>
+        <strong>Option B — Take it easy:</strong> Coast this week. Gets some income but leans toward wants (+$6, wants +$4).
+      </div>`;
+
+    openSplitShopModal({
+      title:`${job.name}: Money Choice`,
+      leftTitle:"This Week's Decision",
+      leftHTML: leftHTML2,
+      rightTitle:"Your Inventory",
+      rightHTML: buildInventoryPanel(),
+      buttons:[
+        { label:"Option A — Reinvest (+$12)", kind:"success",
+          onClick:()=>{
+            state.bank.checking += 12; state.ledger.weekIncome += 12;
+            state.plan.save += 4; state.plan.needs += 1;
+            addLedgerLine(`${job.name} bonus earned: +$12 and stronger saving habit.`);
+            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          }
+        },
+        { label:"Option B — Take It Easy (+$6)", kind:"secondary",
+          onClick:()=>{
+            state.bank.checking += 6; state.ledger.weekIncome += 6;
+            state.plan.wants += 4;
+            addLedgerLine(`${job.name} money choice leaned toward wants.`);
+            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          }
+        }
+      ]
+    });
+  };
+})();
