@@ -10196,8 +10196,8 @@ Required:
         title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
         bucket:[9,12],
         prompt: isFirst
-          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`
-          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`,
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`,
         requireActions:["next_week"],
         phase:"year",
         weekNumber:w
@@ -10469,7 +10469,7 @@ Required:
     if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
     state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
     state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-    const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(baseCost + 3);
+    const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(Math.max(0, baseCost) + 3);
     const haveIt = invQty(itemId) > 0;
     const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -10572,7 +10572,7 @@ Required:
     box.style.display = 'inline-flex';
     box.style.position = 'fixed';
     box.style.left = '50%';
-    box.style.top = '16vh';
+    box.style.top = '10vh';
     box.style.bottom = 'auto';
     box.style.transform = 'translateX(-50%)';
     box.style.pointerEvents = 'none';
@@ -10592,8 +10592,23 @@ Required:
   }
 
   const __prevNotifyAction2 = notifyAction;
+  function __wgltAwardWeeklyBenchmarks(action){
+    const week = Number((state.weekEngine && state.weekEngine.week) || 1);
+    const maps = {
+      weekly: [3,6,12],
+      job_event: [3,6,12],
+      transfer_savings: [1,12],
+      open_cd: [9,12],
+      deposit_check: [1,2],
+      write_check: [1,2]
+    };
+    const dynamic = week <= 4 ? [1,3] : week <= 8 ? [6,12] : [9,12];
+    const awards = (maps[action] || (action === 'next_week' ? dynamic : []));
+    awards.forEach(addCoverage);
+  }
   notifyAction = function(action){
     const res = __prevNotifyAction2.apply(this, arguments);
+    __wgltAwardWeeklyBenchmarks(action);
     const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
     const weeklyCountActions = new Set([
       'job_event','weekly','transfer_savings','open_cd','write_check','deposit_check',
@@ -10651,7 +10666,10 @@ Required:
         startWeeklyStudentFlow(()=>{
           renderAll();
           renderSheet();
-          notifyAction('next_week');
+          // Do not advance the mission step yet.
+          // Week 1 should actually be played before the app moves to Week 2.
+          state.mission.waitingAction = 'job_event';
+          applyLockRules();
         });
         return;
       }
