@@ -752,7 +752,9 @@ function renderSharedProfileBadge(){
 }
 
 let decisionBadgeTimer = null;
-function showDecisionBadge(text){ return; }
+function showDecisionBadge(text){
+  return;
+}
 function formatSourceLabel(src){
   if(src === 'cd') return 'CD';
   if(src === 'hysa') return 'HYSA';
@@ -760,6 +762,20 @@ function formatSourceLabel(src){
   if(src === 'savings') return 'Savings';
   if(src === 'cash') return 'Cash';
   return src ? String(src).charAt(0).toUpperCase() + String(src).slice(1) : 'Selected Account';
+}
+
+function parseDollarAmountFromText(textBlob){
+  const txt = String(textBlob || '');
+  const match = txt.match(/\$(\d+(?:\.\d{1,2})?)/);
+  return match ? Number(match[1]) : 0;
+}
+function labelImpliesSpend(textBlob){
+  const txt = String(textBlob || '').toLowerCase();
+  return /\b(buy|pay|cover|help with|chip in|upgrade|fee|cost|repair|replace|purchase|spend|cover it now|buy now)\b/.test(txt);
+}
+function labelImpliesReward(textBlob){
+  const txt = String(textBlob || '').toLowerCase();
+  return /\b(receiv|earned|earn|get paid|get \$|gift|bonus|tip|inheritance|deposit|put money|you receive|you get)\b/.test(txt) || /\+\$\d+/.test(txt);
 }
 
 const AUTO_REFLECTION_BANK = {
@@ -1419,7 +1435,17 @@ function openScenarioModal(scenario, onDone){
       const resolvedCost = typeof opt.cost === "function" ? opt.cost(job) : opt.cost;
       const inferredFunding = (!resolvedCost || resolvedCost <= 0) ? inferScenarioFunding(opt, job) : null;
       const inferredReward = (!resolvedCost || resolvedCost <= 0) ? inferScenarioReward(opt, job) : null;
-      const paymentAmount = (resolvedCost && resolvedCost > 0) ? resolvedCost : (inferredFunding ? inferredFunding.amount : 0);
+      const labelBlob = `${opt.label || ''} ${opt.hint || ''} ${body || ''}`;
+      const parsedLabelAmount = parseDollarAmountFromText(labelBlob);
+      const labelFunding = (!resolvedCost || resolvedCost <= 0) && !inferredFunding && parsedLabelAmount > 0 && labelImpliesSpend(labelBlob)
+        ? { amount: parsedLabelAmount, originalSource:'pay_chain', inferred:true, fromLabel:true }
+        : null;
+      const labelReward = (!resolvedCost || resolvedCost <= 0) && !inferredReward && parsedLabelAmount > 0 && labelImpliesReward(labelBlob)
+        ? { amount: parsedLabelAmount, originalDest:'checking', inferred:true, fromLabel:true }
+        : null;
+      const paymentInfoResolved = inferredFunding || labelFunding;
+      const rewardInfoResolved = inferredReward || labelReward;
+      const paymentAmount = (resolvedCost && resolvedCost > 0) ? resolvedCost : (paymentInfoResolved ? paymentInfoResolved.amount : 0);
 
       if(paymentAmount && paymentAmount > 0){
         closeModal();
@@ -1430,23 +1456,27 @@ Choose which account to pay from:`, (src)=>{
             let summary;
             if(opt.applyAfterFunding){
               summary = opt.applyAfterFunding(state, job, src);
-            }else if(inferredFunding){
-              summary = runApplyWithFundingOverride(opt.apply, inferredFunding, job);
+            }else if(paymentInfoResolved){
+              summary = runApplyWithFundingOverride(opt.apply, paymentInfoResolved, job);
             }else{
               summary = opt.apply(state, job);
             }
-            showDecisionBadge(`Paid from ${formatSourceLabel(src)}: ${money(paymentAmount)}`);
             finalizeChoice(opt, i, summary, {source:src, amount:paymentAmount});
           });
         }, 50);
-      } else if(inferredReward && inferredReward.amount > 0){
+      } else if(rewardInfoResolved && rewardInfoResolved.amount > 0){
         closeModal();
         setTimeout(()=>{
-          chooseMoneyDestination(inferredReward.amount, `${opt.label}
+          chooseMoneyDestination(rewardInfoResolved.amount, `${opt.label}
 
-You are receiving ${money(inferredReward.amount)}.`, (dest)=>{
-            const summary = runApplyWithRewardOverride(opt.apply, inferredReward, job);
-            finalizeChoice(opt, i, summary, {source:dest, amount:inferredReward.amount});
+You are receiving ${money(rewardInfoResolved.amount)}.`, (dest)=>{
+            let summary;
+            if(rewardInfoResolved && !rewardInfoResolved.fromLabel){
+              summary = runApplyWithRewardOverride(opt.apply, rewardInfoResolved, job);
+            }else{
+              summary = opt.apply(state, job);
+            }
+            finalizeChoice(opt, i, summary, {source:dest, amount:rewardInfoResolved.amount});
           });
         }, 50);
       } else {
@@ -3564,7 +3594,33 @@ if(!state.unlockedJobs) state.unlockedJobs = new Set();
 if(!state.careerProgress) state.careerProgress = {};
 
 /* Coverage tracking */
-function addCoverage(b){ state.coverage.add(b); }
+function addCoverage(b){
+  const alreadyHad = !!(state.coverage && state.coverage.has && state.coverage.has(b));
+  state.coverage.add(b);
+  if(alreadyHad) return;
+  if(!state.ui) state.ui = {};
+  if(!state.ui.coverageQueue) state.ui.coverageQueue = [];
+  state.ui.coverageQueue.push(b);
+  if(state.ui.coverageModalOpen) return;
+  const pumpCoverageModal = ()=>{
+    if(!state.ui || !state.ui.coverageQueue || !state.ui.coverageQueue.length) return;
+    if(state.ui.coverageModalOpen) return;
+    const nextB = state.ui.coverageQueue.shift();
+    const coveredName = FL_BUCKETS[nextB] || BENCH[nextB] || 'Financial literacy standard';
+    state.ui.coverageModalOpen = true;
+    openModal({
+      title:'Benchmark Covered',
+      meta:`Benchmark #${nextB}`,
+      body:`Great work. You just covered Benchmark #${nextB}.\n\nThis benchmark covers: ${coveredName}.`,
+      buttons:[{id:'ok',label:'Got it',kind:'primary'}],
+      onPick:()=>{
+        state.ui.coverageModalOpen = false;
+        setTimeout(pumpCoverageModal, 60);
+      }
+    });
+  };
+  setTimeout(pumpCoverageModal, 60);
+}
 function trackCoverageForAction(action){
   const map = {
     startup_choose:[1,6,12,3],
@@ -3605,7 +3661,13 @@ function clearGlow(){
   document.querySelectorAll(".glow-next").forEach(el=>el.classList.remove("glow-next"));
 }
 function getRandomEventButtonId(type){
-  return type === "job" ? "btnJobEvent" : type === "life" ? "btnSchoolEvent" : "btnSocialEvent";
+  if(type === "job") return "btnJobEvent";
+  if(type === "life") return "btnSchoolEvent";
+  if(type === "financial") return "btnSocialEvent";
+  if(type === "inheritance") return "btnInheritance";
+  if(type === "dispute") return "btnDispute";
+  if(type === "tax") return "btnGenLocalTax";
+  return "btnSocialEvent";
 }
 function clearRandomEventPending(){
   if(!state.ui) state.ui = {};
@@ -3615,7 +3677,7 @@ function clearRandomEventPending(){
 function applyRandomEventButtonState(){
   if(!state.ui) return;
 
-  const choiceIds = ["btnJobEvent","btnSchoolEvent","btnSocialEvent"];
+  const choiceIds = ["btnJobEvent","btnSchoolEvent","btnSocialEvent","btnInheritance","btnDispute","btnGenLocalTax"];
   const allIds = [...choiceIds, "btnRandomEvent"];
   allIds.forEach(id=>{
     const el = $(id);
@@ -6914,6 +6976,9 @@ function pickWeightedRandomEventType(){
 function getRandomEventPresentation(type){
   if(type === 'job') return { label:'💼 Job Event', buttonId:'btnJobEvent', detail:'work and reputation choices' };
   if(type === 'financial') return { label:'⚠️ Financial Decision', buttonId:'btnSocialEvent', detail:'money pressure and protection choices' };
+  if(type === 'inheritance') return { label:'🎁 Inheritance Lesson', buttonId:'btnInheritance', detail:'unexpected money and choices' };
+  if(type === 'dispute') return { label:'🧾 Billing Dispute', buttonId:'btnDispute', detail:'consumer protection practice' };
+  if(type === 'tax') return { label:'🏛️ Local Tax Lesson', buttonId:'btnGenLocalTax', detail:'tax responsibility practice' };
   return { label:'👥 Social / Life Scenario', buttonId:'btnSchoolEvent', detail:'people, school, and daily pressure choices' };
 }
 
@@ -6922,8 +6987,14 @@ function runRandomEvent(){
   if(state.ui.randomEventCycling) return;
 
   showBanner('🎲 Rolling your week...');
-  const finalType = pickWeightedRandomEventType();
-  const ids = ["btnSchoolEvent","btnJobEvent","btnSocialEvent"]; // life, job, financial order
+  let finalType = pickWeightedRandomEventType();
+  if(finalType === 'financial'){
+    const specialRoll = Math.random();
+    if(specialRoll < 0.18) finalType = 'inheritance';
+    else if(specialRoll < 0.36) finalType = 'dispute';
+    else if(specialRoll < 0.54) finalType = 'tax';
+  }
+  const ids = ["btnSchoolEvent","btnJobEvent","btnSocialEvent","btnInheritance","btnDispute","btnGenLocalTax"]; // life, job, financial + benchmark practice
   let step = 0;
   const cycleCount = 2 + Math.floor(Math.random()*2); // 2 to 3 visible rolls
   const totalSteps = ids.length * cycleCount;
@@ -7324,7 +7395,10 @@ function runJobRealLifeEvent(afterDone){
   if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
   state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
   state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-  const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(Math.max(0, baseCost) + 3);
+  const itemName = pair[0], itemId = pair[1];
+  const baseItem = getJobCatalogItem(itemId);
+  const baseCost = Number((baseItem && baseItem.cost) || pair[2] || 0);
+  const rushCost = baseCost > 0 ? baseCost + 3 : Number(pair[2] || 0);
   const haveIt = invQty(itemId) > 0;
   const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -8483,14 +8557,35 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
   $("btnLedgerExpense").onclick=()=> ledgerAddExpense();
   $("btnLedgerClearWeek").onclick=()=> ledgerClearWeek();
 
-  $("btnGenLocalTax").onclick=()=> generateLocalTax();
+  $("btnGenLocalTax").onclick=()=>{
+    if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "tax") return;
+    const hadPending = state.ui?.randomEventPendingType === "tax";
+    clearRandomEventPending();
+    applyLockRules();
+    generateLocalTax();
+    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+  };
   $("btnPayLocalTax").onclick=()=> payLocalTax();
-  $("btnInheritance").onclick=()=> triggerInheritance();
-  $("btnDispute").onclick=()=> startDispute();
+  $("btnInheritance").onclick=()=>{
+    if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "inheritance") return;
+    const hadPending = state.ui?.randomEventPendingType === "inheritance";
+    clearRandomEventPending();
+    applyLockRules();
+    triggerInheritance();
+    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+  };
+  $("btnDispute").onclick=()=>{
+    if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "dispute") return;
+    const hadPending = state.ui?.randomEventPendingType === "dispute";
+    clearRandomEventPending();
+    applyLockRules();
+    startDispute();
+    if(hadPending) showBanner("Nice. You played the randomly selected event.");
+  };
   if($("btnJobEvent")) $("btnJobEvent").textContent = "Run Job Event";
   if($("btnSchoolEvent")) $("btnSchoolEvent").textContent = "Run Life Scenario";
   if($("btnSocialEvent")) $("btnSocialEvent").textContent = "Run Financial Decision";
-  if($("btnRandomEvent")) { const w=getDynamicRandomEventWeights(); $("btnRandomEvent").textContent = `Run Random Event (${w.life||40}/${w.job||40}/${w.financial||20})`; }
+  if($("btnRandomEvent")) { $("btnRandomEvent").textContent = "Run Random Event"; }
   $("btnJobEvent").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "job") return;
     const hadPending = state.ui?.randomEventPendingType === "job";
@@ -10177,8 +10272,8 @@ Required:
         title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
         bucket:[9,12],
         prompt: isFirst
-          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, credit effects, benchmark check-ins, wants moments, and hook follow-through\n• Benchmark check-ins and coverage progress during the year`
-          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, credit effects, benchmark check-ins, wants moments, and hook follow-through\n• Benchmark check-ins and coverage progress during the year`,
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`,
         requireActions:["next_week"],
         phase:"year",
         weekNumber:w
@@ -10245,7 +10340,7 @@ Required:
     openModal({
       title:`🎲 Week ${w}: Run Random Events`,
       meta:`${monthName || 'Weekly Flow'} • Benchmarks + event practice`,
-      body:`Run the glowing \"Run Random Event\" button this week.\n\nRequired this week: ${wr.target} event${wr.target===1?'':'s'}\nCompleted: ${wr.done}\nRemaining: ${remaining}\n\nNo less than 1 and no more than 3 random events are required each week.\n\nThese weekly actions also help drive wants moments, benchmark coverage, and hooks through the year.`,
+      body:`Run the glowing \"Run Random Event\" button this week.\n\nRequired this week: ${wr.target} event${wr.target===1?'':'s'}\nCompleted: ${wr.done}\nRemaining: ${remaining}\n\nNo less than 1 and no more than 3 random events are required each week.`,
       buttons:[{id:'go', label:'Go to Run Random Event →', kind:'primary'}],
       onPick:()=>{
         openTab('events', {auto:true});
@@ -10293,7 +10388,7 @@ Required:
     const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
     const result = __origAddCoverage.apply(this, arguments);
     if(!had){
-      setTimeout(()=>{ try{ openModal({ title:`✅ Benchmark Covered`, meta:`Benchmark #${b}`, body:`Great work. You just covered Benchmark #${b}.`, buttons:[{id:'ok',label:'Continue',kind:'primary'}], onPick:()=>{} }); }catch(err){ showBanner(`Benchmark #${b} covered`); } }, 120);
+      showBanner(`Benchmark #${b} covered`);
     }
     return result;
   };
@@ -10325,7 +10420,7 @@ Required:
     }
     const res = __origNotifyAction.apply(this, arguments);
     const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
-    const weeklyCountActions = new Set(['job_event','weekly','life_event','financial_event','school_event','social_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','inheritance','dispute','review_contract','contract_pick']);
+    const weeklyCountActions = new Set(['job_event','transfer_savings','open_cd','write_check','deposit_check','pay_local_tax','gen_local_tax','inheritance','dispute','review_contract','contract_pick']);
     if(wr && wr.awaitingResolution && weeklyCountActions.has(action)){
       completeWeeklyRandomEvent();
     }
@@ -10367,27 +10462,6 @@ Required:
       wr.done = 0;
       wr.active = true;
       wr.awaitingResolution = false;
-      const wantsChance = Math.random() < 0.35;
-      if(wantsChance && typeof runSocialDecision === 'function') {
-        setTimeout(()=>{
-          try{
-            openModal({
-              title:`🎯 Weekly Wants + Hooks`,
-              meta:`Week ${week} • Optional pressure / wants moment`,
-              body:`This week may include a wants moment or hook consequence depending on your earlier choices and budget plan.`,
-              buttons:[{id:'go',label:'Continue to Events',kind:'primary'}],
-              onPick:()=>{
-                showWeeklyRandomPrompt();
-                if(typeof onAllDone === 'function') onAllDone();
-              }
-            });
-          }catch(err){
-            showWeeklyRandomPrompt();
-            if(typeof onAllDone === 'function') onAllDone();
-          }
-        }, 80);
-        return;
-      }
       showWeeklyRandomPrompt();
       if(typeof onAllDone === 'function') onAllDone();
     };
@@ -10398,7 +10472,7 @@ Required:
       openModal({
         title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
         meta:'Ledger restock for the month',
-        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nThis month also includes benchmark practice, wants moments, and hook/cause-effect follow-through as you play.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
