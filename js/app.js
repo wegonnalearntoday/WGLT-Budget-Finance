@@ -3038,7 +3038,7 @@ ${c.disclosure}`;
 /* Called once at mission start to initialize the engine */
 function initWeekEngine(){
   state.weekEngine = {
-    week: 0,          // setup phase before Week 1 begins
+    week: 1,          // current week 1-48
     choices: {},      // scenario id → choice index made
     pending: [],      // consequence queue
     ranBonus: {},     // week → true if bonus already ran
@@ -3381,13 +3381,7 @@ function runWeeklyScenarios(week, onAllDone){
 
 /* Update the header week/month display */
 function renderWeekHeader(){
-  const w = state.weekEngine ? Number(state.weekEngine.week || 0) : 1;
-  if(w <= 0){
-    if($("weekNum")) $("weekNum").textContent = 'Setup';
-    if($("monthName")) $("monthName").textContent = 'Setup Phase';
-    state.day = 1;
-    return;
-  }
+  const w = state.weekEngine ? state.weekEngine.week : 1;
   const cal = WEEK_CALENDAR[Math.min(w,48)] || WEEK_CALENDAR[1];
   if($("weekNum")) $("weekNum").textContent = w;
   if($("monthName")) $("monthName").textContent = cal.name;
@@ -4178,7 +4172,7 @@ function guidePreStart(){
     if($("jobPrev")) $("jobPrev").classList.add("glow-next");
     if($("jobNext")) $("jobNext").classList.add("glow-next");
     if($("btnAddWant")) $("btnAddWant").classList.add("glow-next");
-    setLog("Step 2: use the arrows to choose a student job and lock it. Step 3: add your wants, then tap Start Year Mission to continue setup.");
+    setLog("Step 2: use the arrows to choose a student job, then add your wants and tap Start Year Mission.");
     scrollToBtn("jobNext");
   } else {
     openTab("plan");
@@ -4288,11 +4282,11 @@ function renderProgress(){
   const pct=Math.round((m.index/total)*100);
   $("barFill").style.width=pct+"%";
   const cur=m.steps[m.index];
-  const actualWeek = state.weekEngine ? Number(state.weekEngine.week || 0) : (state.day * 4);
-  const setupPhase = actualWeek <= 0 || (cur && /^Setup Step\s+/i.test(cur.title || ''));
-  const leadLabel = setupPhase ? 'Setup' : `Week ${actualWeek}/48`;
-  if(cur) $("stepMeta").textContent = `${leadLabel} • Step ${m.index+1}/${total} • ${cur.title}`;
-  else $("stepMeta").textContent = `${leadLabel} • Mission complete! ✅`;
+  const actualWeek = state.weekEngine ? state.weekEngine.week : (state.day * 4);
+  const inSetup = !!(m.active && m.index <= 2);
+  const weekLabel = inSetup ? "Setup" : `Week ${actualWeek}/48`;
+  if(cur) $("stepMeta").textContent = `${weekLabel} • Step ${m.index+1}/${total} • ${cur.title}`;
+  else $("stepMeta").textContent = `${weekLabel} • Mission complete! ✅`;
 }
 
 /* Money movement helpers */
@@ -4820,9 +4814,7 @@ function buildMonthMissionSteps(){
       prompt:`Choose your checking account, savings account, and insurance.
 
 Required:
-• Tap "Choose Bank + Insurance (Start)" (Banking tab)
-
-Keep the detailed bank choices in place and finish the setup selections before moving on.`,
+• Tap "Choose Bank + Insurance (Start)" (Banking tab)`,
       requireActions:["startup_choose"]
     },
     {
@@ -4834,32 +4826,12 @@ Required:
 • Tap "Savings Challenge" (Plan tab) and set a goal`,
       requireActions:["savings_goal"]
     },
-    {
-      title:"Setup Step 6: Stock up supplies",
-      bucket:[3,1],
-      prompt:`Use the Ledger to buy one job item to get started.
-
-Required:
-• Buy ONE item in the Ledger tab
-
-When this step is complete, Week 1 of the 48-week year begins.`,
-      requireActions:["ledger_buy"]
-    }
   ];
 
   for(let m=1; m<=12; m++){
-    if(m === 1){
-      steps.push({
-        title:`Month ${m}: Advance to next week`,
-        bucket:[9,12],
-        prompt:`Setup is complete. Tap "Next Week ▶" to begin Week 1 and start the 48-week year.`,
-        requireActions:["next_week"]
-      });
-      continue;
-    }
     if(m % 2 === 1){
       steps.push({
-        title:`Month ${m}: Stock up supplies`,
+        title:`Setup Step 6: Stock up supplies`,
         bucket:[3,1],
         prompt:`Use the Ledger to buy one job item for this month.
 
@@ -4944,7 +4916,7 @@ function getMissionStepDisplay(step){
   let title = step?.title || "";
   let prompt = step?.prompt || "";
 
-  if(!/^Setup Step\s+/i.test(title) && /^Month\s+(\d+):/i.test(title)){
+  if(/^Month\s+(\d+):/i.test(title)){
     const n = Number(title.match(/^Month\s+(\d+):/i)[1] || 0);
     if(n > 0) title = title.replace(/^Month\s+\d+:/i, `Week ${n*4}:`);
   }
@@ -4972,47 +4944,6 @@ function startMission(){
     guidePreStart();
     return;
   }
-
-  if(!Array.isArray(state.jobs) || !state.jobs.length){
-    beep("warn");
-    openTab("plan");
-    showBanner("No jobs are available right now");
-    return;
-  }
-
-  if(typeof state.jobIndex !== "number" || state.jobIndex < 0 || state.jobIndex >= state.jobs.length){
-    state.jobIndex = 0;
-  }
-
-  let selectedJob = state.jobs[state.jobIndex] || state.jobs[0];
-  if(!selectedJob){
-    beep("warn");
-    openTab("plan");
-    showBanner("Choose your job first");
-    return;
-  }
-
-  if(selectedJob && !isJobUnlocked(selectedJob.id)){
-    beep("warn");
-    showBanner(selectedJob.name + " is locked. " + getUnlockRequirementText(selectedJob.id));
-    return;
-  }
-
-  // The selected job in the carousel becomes the locked job when the mission starts.
-  // This avoids the old loop where the app demanded a separate lock step even after the
-  // player had already picked a job and was ready to move into setup.
-  state.jobLocked = true;
-
-  if((!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()) && getPendingWantsSelectionTotal() >= getWantsTargetAmount()){
-    const selected = getSelectedWantInputs();
-    state.plan.wantsSelections = selected.map(o=>({label:o.dataset.label || o.parentElement?.innerText?.trim() || `Want ${o.value}`, value:Number(o.value||0)}));
-    state.plan.wants = getPendingWantsSelectionTotal();
-    state.plan.wantsExtras = 0;
-    state.plan.wantsCommitted = true;
-    state.plan.unplannedWantUsedThisMonth = false;
-    state.plan.wantsInventoryActive = state.plan.wantsSelections.map(w=>({label:w.label, value:w.value, available:true}));
-  }
-
   if(!state.plan.wantsCommitted || state.plan.wants < getWantsTargetAmount()){
     beep("warn");
     openTab("plan");
@@ -5020,15 +4951,25 @@ function startMission(){
     updateWantsUI();
     return;
   }
+  const job = state.jobs[state.jobIndex];
+  if(!job){
+    beep("warn");
+    openTab("plan");
+    showBanner("Choose a job first");
+    return;
+  }
 
-  const job = selectedJob;
+  // Force-lock the currently selected job when Standard/Elite starts the year.
+  state.jobLocked = true;
+  state.jobId = job.id;
+
   state.day = 1;
   state.plan.income = job.pay * 4;
   state.plan.wantsExtras = 0;
   state.plan.appliedMonths = new Set();
   const currentModel = state.plan.model || "rule702010";
   const committedWants = state.plan.wants;
-  const committedSelections = [...state.plan.wantsSelections];
+  const committedSelections = [...(state.plan.wantsSelections || [])];
   const currentInsurance = state.plan.insurance;
   applyBudgetModel(currentModel);
   state.plan.wants = committedWants;
@@ -5047,14 +4988,17 @@ function startMission(){
   state.bank.savings = 0;
   state.bank.checkingType = null;
   state.bank.savingsType = null;
-  state.jobLocked = true;
 
-  state.mission.active=true;
-  state.mission.paused=false;
-  state.mission.index=0;
+  state.mission.active = true;
+  state.mission.paused = false;
+  state.mission.index = 0;
   state.mission.steps = buildMonthMissionSteps();
-  state.mission.waitingAction=null;
+  state.mission.waitingAction = "startup_choose";
   initWeekEngine();
+  if(state.weekEngine){
+    state.weekEngine.week = 1;
+    state.weekEngine.active = false;
+  }
   renderWeekHeader();
   hideStudentFocusUi();
 
@@ -5062,13 +5006,12 @@ function startMission(){
   state.savingsMilestones = new Set();
 
   state.ledger.inventory = {};
-  state.ledger.weekExpenses=0;
-  state.ledger.weekIncome=0;
-  state.ledger.weekProfit=0;
-  state.ledger.history=[];
+  state.ledger.weekExpenses = 0;
+  state.ledger.weekIncome = 0;
+  state.ledger.weekProfit = 0;
+  state.ledger.history = [];
   renderLedger();
 
-  // Initialize monthly tracking
   state.monthSnapshots = [];
   state.plan.unplannedWantUsedThisMonth = false;
   state.plan.unplannedWantLabelsThisMonth = [];
@@ -5081,10 +5024,15 @@ function startMission(){
   state.standardV1.chainHistory = [];
   state.standardV1.chainWindowsFired = {};
 
-  setLog("Year mission started! June Week 1 — follow the glowing actions. Health and choice echoes are now live.");
-  setTimeout(()=>promptWeeklyGoalIfNeeded(null, {jumpToBankAfterPick:true}), 200);
+  setLog("Setup started. Next: Choose Bank + Insurance.");
   renderAll();
-  runCurrentMissionStep();
+
+  setTimeout(()=>{
+    if(!state.mission || !state.mission.active) return;
+    state.mission.index = 0;
+    state.mission.waitingAction = "startup_choose";
+    runCurrentMissionStep();
+  }, 80);
 }
 
 function pauseMission(){
@@ -5253,7 +5201,6 @@ function notifyAction(action){
   if(!m.active) return;
 
   const step=m.steps[m.index];
-  const wasSetupStep = !!(step && /^Setup Step\s+/i.test(step.title || ''));
   if(!step) return;
 
   if(!step._done) step._done=new Set();
@@ -5270,11 +5217,6 @@ function notifyAction(action){
     setLog(`✅ Completed: ${completedStep.title}`);
     m.index += 1;
     m.waitingAction=null;
-    if(wasSetupStep && /Setup Step 6/i.test(step.title || '') && state.weekEngine && Number(state.weekEngine.week || 0) <= 0){
-      state.weekEngine.week = 1;
-      renderWeekHeader();
-      showBanner('Setup complete. Week 1 begins now.');
-    }
     renderProgress();
     applyLockRules();
     setTimeout(()=>runCurrentMissionStep(), 220);
@@ -8488,7 +8430,7 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     state.jobLocked = true;
     beep("success");
     showBanner(job.name + " selected and locked!");
-    setLog("Job locked: " + job.name + ". Now finalize your wants and tap Start Year Mission to continue setup.");
+    setLog("Job locked: " + job.name + ". Now build your wants and tap Start Year Mission.");
     guideWantsStep();
     scrollToBtn("btnAddWant");
   };
