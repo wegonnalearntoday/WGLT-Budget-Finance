@@ -4283,8 +4283,7 @@ function renderProgress(){
   $("barFill").style.width=pct+"%";
   const cur=m.steps[m.index];
   const actualWeek = state.weekEngine ? state.weekEngine.week : (state.day * 4);
-  const inSetup = !!(m.active && m.index <= 2);
-  const weekLabel = inSetup ? "Setup" : `Week ${actualWeek}/48`;
+  const weekLabel = `Week ${actualWeek}/48`;
   if(cur) $("stepMeta").textContent = `${weekLabel} • Step ${m.index+1}/${total} • ${cur.title}`;
   else $("stepMeta").textContent = `${weekLabel} • Mission complete! ✅`;
 }
@@ -4809,7 +4808,7 @@ function buildMonthMissionSteps(){
   const job = state.jobs[state.jobIndex];
   const steps = [
     {
-      title:"Setup Step 4: Choose Bank + Insurance",
+      title:"Month 1: Choose bank + insurance",
       bucket:[1,6,12,3],
       prompt:`Choose your checking account, savings account, and insurance.
 
@@ -4818,7 +4817,7 @@ Required:
       requireActions:["startup_choose"]
     },
     {
-      title:"Setup Step 5: Set Savings Goal",
+      title:"Month 1: Set Savings Challenge Goal",
       bucket:[12,3],
       prompt:`Pick a year-end savings goal.
 
@@ -4831,7 +4830,7 @@ Required:
   for(let m=1; m<=12; m++){
     if(m % 2 === 1){
       steps.push({
-        title:`Setup Step 6: Stock up supplies`,
+        title:`Month ${m}: Stock up supplies`,
         bucket:[3,1],
         prompt:`Use the Ledger to buy one job item for this month.
 
@@ -4952,24 +4951,13 @@ function startMission(){
     return;
   }
   const job = state.jobs[state.jobIndex];
-  if(!job){
-    beep("warn");
-    openTab("plan");
-    showBanner("Choose a job first");
-    return;
-  }
-
-  // Force-lock the currently selected job when Standard/Elite starts the year.
-  state.jobLocked = true;
-  state.jobId = job.id;
-
   state.day = 1;
   state.plan.income = job.pay * 4;
   state.plan.wantsExtras = 0;
   state.plan.appliedMonths = new Set();
   const currentModel = state.plan.model || "rule702010";
   const committedWants = state.plan.wants;
-  const committedSelections = [...(state.plan.wantsSelections || [])];
+  const committedSelections = [...state.plan.wantsSelections];
   const currentInsurance = state.plan.insurance;
   applyBudgetModel(currentModel);
   state.plan.wants = committedWants;
@@ -4988,17 +4976,14 @@ function startMission(){
   state.bank.savings = 0;
   state.bank.checkingType = null;
   state.bank.savingsType = null;
+  state.jobLocked = true;
 
-  state.mission.active = true;
-  state.mission.paused = false;
-  state.mission.index = 0;
+  state.mission.active=true;
+  state.mission.paused=false;
+  state.mission.index=0;
   state.mission.steps = buildMonthMissionSteps();
-  state.mission.waitingAction = "startup_choose";
+  state.mission.waitingAction=null;
   initWeekEngine();
-  if(state.weekEngine){
-    state.weekEngine.week = 1;
-    state.weekEngine.active = false;
-  }
   renderWeekHeader();
   hideStudentFocusUi();
 
@@ -5006,12 +4991,13 @@ function startMission(){
   state.savingsMilestones = new Set();
 
   state.ledger.inventory = {};
-  state.ledger.weekExpenses = 0;
-  state.ledger.weekIncome = 0;
-  state.ledger.weekProfit = 0;
-  state.ledger.history = [];
+  state.ledger.weekExpenses=0;
+  state.ledger.weekIncome=0;
+  state.ledger.weekProfit=0;
+  state.ledger.history=[];
   renderLedger();
 
+  // Initialize monthly tracking
   state.monthSnapshots = [];
   state.plan.unplannedWantUsedThisMonth = false;
   state.plan.unplannedWantLabelsThisMonth = [];
@@ -5024,15 +5010,10 @@ function startMission(){
   state.standardV1.chainHistory = [];
   state.standardV1.chainWindowsFired = {};
 
-  setLog("Setup started. Next: Choose Bank + Insurance.");
+  setLog("Year mission started! June Week 1 — follow the glowing actions. Health and choice echoes are now live.");
+  setTimeout(()=>promptWeeklyGoalIfNeeded(null, {jumpToBankAfterPick:true}), 200);
   renderAll();
-
-  setTimeout(()=>{
-    if(!state.mission || !state.mission.active) return;
-    state.mission.index = 0;
-    state.mission.waitingAction = "startup_choose";
-    runCurrentMissionStep();
-  }, 80);
+  runCurrentMissionStep();
 }
 
 function pauseMission(){
@@ -10103,4 +10084,103 @@ window.WGLT_DEBUG.inspectJobIdentity = function(jobId){
       };
     }
   }catch(err){}
+})();
+
+
+/* ============================================================
+   PHASE 6 PATCH: clean setup-to-48-week handoff
+   - Beginner stays Budget Boss Jr via existing config routing
+   - Replaces old month-step mission prompts with:
+     Setup Step 4: Bank + Insurance
+     Setup Step 5: Savings Goal
+     Setup Step 6: Stock up supplies
+     Week 1..48: Next Week flow
+   ============================================================ */
+(function(){
+  const __origBuildMonthMissionSteps = buildMonthMissionSteps;
+  const __origGetMissionStepDisplay = getMissionStepDisplay;
+  const __origStartMission = startMission;
+
+  function make48WeekMissionSteps(){
+    const steps = [
+      {
+        title:"Choose bank + insurance",
+        bucket:[1,6,12,3],
+        prompt:`Choose your checking account, savings account, and insurance.
+
+Required:
+• Tap "Choose Bank + Insurance (Start)" (Banking tab)`,
+        requireActions:["startup_choose"],
+        phase:"setup",
+        setupStep:4
+      },
+      {
+        title:"Set Savings Goal",
+        bucket:[12,3],
+        prompt:`Pick a year-end savings goal.
+
+Required:
+• Tap "Savings Challenge" (Plan tab) and set a goal`,
+        requireActions:["savings_goal"],
+        phase:"setup",
+        setupStep:5
+      },
+      {
+        title:"Stock up supplies",
+        bucket:[3,1],
+        prompt:`Use the Ledger to buy one job item before the year begins.
+
+Required:
+• Buy ONE item in the Ledger tab`,
+        requireActions:["ledger_buy"],
+        phase:"setup",
+        setupStep:6
+      }
+    ];
+
+    for(let w=1; w<=48; w++){
+      const monthName = (typeof weekToMonthName === 'function') ? weekToMonthName(w) : '';
+      const isFirst = w === 1;
+      steps.push({
+        title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
+        bucket:[9,12],
+        prompt: isFirst
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed`,
+        requireActions:["next_week"],
+        phase:"year",
+        weekNumber:w
+      });
+    }
+    return steps;
+  }
+
+  buildMonthMissionSteps = function(){
+    return make48WeekMissionSteps();
+  };
+
+  getMissionStepDisplay = function(step){
+    if(step && step.phase === 'setup'){
+      return { title: step.title || 'Setup', prompt: step.prompt || '' };
+    }
+    if(step && step.phase === 'year'){
+      return { title: step.title || `Week ${step.weekNumber || 1}`, prompt: step.prompt || '' };
+    }
+    return __origGetMissionStepDisplay(step);
+  };
+
+  startMission = function(){
+    const result = __origStartMission.apply(this, arguments);
+    try{
+      if(state && state.mission && state.mission.active){
+        state.mission.steps = make48WeekMissionSteps();
+        state.mission.index = 0;
+        state.mission.waitingAction = null;
+        setLog("Setup started. Finish banking, savings goal, and supplies, then Week 1 begins the 48-week challenge.");
+        renderAll();
+        runCurrentMissionStep();
+      }
+    }catch(err){}
+    return result;
+  };
 })();
