@@ -753,24 +753,7 @@ function renderSharedProfileBadge(){
 
 let decisionBadgeTimer = null;
 function showDecisionBadge(text){
-  const box = document.getElementById('decisionBadge');
-  const label = document.getElementById('decisionBadgeText');
-  if(!box || !label || !text) return;
-  label.textContent = text;
-  box.style.display = 'inline-flex';
-  box.style.position = 'fixed';
-  box.style.left = '50%';
-  box.style.top = '25vh';
-  box.style.bottom = 'auto';
-  box.style.transform = 'translateX(-50%)';
-  box.style.pointerEvents = 'none';
-  box.style.zIndex = '10005';
-  box.classList.add('show');
-  clearTimeout(decisionBadgeTimer);
-  decisionBadgeTimer = setTimeout(()=>{
-    box.classList.remove('show');
-    box.style.display = 'none';
-  }, 1200);
+  return;
 }
 function formatSourceLabel(src){
   if(src === 'cd') return 'CD';
@@ -7343,7 +7326,7 @@ function runJobRealLifeEvent(afterDone){
   if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
   state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
   state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-  const itemName=pair[0], itemId=pair[1], rushCost=pair[2];
+  const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(Math.max(0, baseCost) + 3);
   const haveIt = invQty(itemId) > 0;
   const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -10196,8 +10179,10 @@ Required:
         title: isFirst ? `Week 1: Start your 48-week challenge` : `Week ${w}: Advance to next week`,
         bucket:[9,12],
         prompt: isFirst
-          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`
-          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed\n• Benchmark check-ins and coverage progress during the year`,
+          ? `Tap "Next Week ▶" to begin Week 1 of your 48-week challenge.${monthName ? `\n\nThis launches your first weekly flow in ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed
+• Benchmark check-ins, wants moments, and hook consequences during the year`
+          : `Tap "Next Week ▶" to play Week ${w} of your 48-week challenge.${monthName ? `\n\nCurrent month: ${monthName}.` : ''}\n\nWhat happens when you tap it:\n• Weekly supply decision\n• Job and life/financial event flow\n• Money updates, growth, and credit effects when needed
+• Benchmark check-ins, wants moments, and hook consequences during the year`,
         requireActions:["next_week"],
         phase:"year",
         weekNumber:w
@@ -10246,6 +10231,31 @@ Required:
     const w = Number(week || (state.weekEngine && state.weekEngine.week) || 1);
     if(w <= 1) return true;
     return weekToMonth(w) !== weekToMonth(w - 1);
+  }
+
+  const MONTHLY_BENCHMARK_FOCUS = {
+    1:[1,6,12],
+    2:[3,7,12],
+    3:[2,7,11],
+    4:[9,12],
+    5:[5,11],
+    6:[8,3,4],
+    7:[11,13],
+    8:[10,13],
+    9:[1,12],
+    10:[2,1],
+    11:[1,2],
+    12:[9,12]
+  };
+  function getMonthlyBenchmarkFocus(week){
+    const month = Number(weekToMonth(week || 1) || 1);
+    return (MONTHLY_BENCHMARK_FOCUS[month] || []).map(Number);
+  }
+  function getBenchmarkFocusText(week){
+    const ids = getMonthlyBenchmarkFocus(week);
+    if(!ids.length) return 'Focus benchmarks this month will show up during weekly choices.';
+    return ids.map(id => `Benchmark #${id}: ${BENCH[id] || ''}`.trim()).join('
+');
   }
 
   function ensureWeeklyFlowState(){
@@ -10312,7 +10322,14 @@ Required:
     const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
     const result = __origAddCoverage.apply(this, arguments);
     if(!had){
-      showBanner(`Benchmark #${b} covered`);
+      openModal({
+        title:`✅ Benchmark #${b} Covered`,
+        meta:(BENCH && BENCH[b]) ? BENCH[b] : 'Benchmark progress',
+        body:`You just hit Benchmark #${b}${BENCH && BENCH[b] ? `: ${BENCH[b]}` : ''}.
+
+This counts toward your year-long benchmark progress.`,
+        buttons:[{id:'ok', label:'Keep Going', kind:'primary'}]
+      });
     }
     return result;
   };
@@ -10386,8 +10403,26 @@ Required:
       wr.done = 0;
       wr.active = true;
       wr.awaitingResolution = false;
-      showWeeklyRandomPrompt();
-      if(typeof onAllDone === 'function') onAllDone();
+      const launchWeeklyPrompt = ()=>{
+        showWeeklyRandomPrompt();
+        if(typeof onAllDone === 'function') onAllDone();
+      };
+      const focusIds = getMonthlyBenchmarkFocus(week);
+      if(focusIds.length){
+        openModal({
+          title:`🎯 ${weekToMonthName(week)} Benchmark Focus`,
+          meta:`Week ${week} • monthly goals`,
+          body:`These are the benchmark targets to watch this month:
+
+${getBenchmarkFocusText(week)}
+
+You will work through them during your weekly events, money choices, and monthly tasks.`,
+          buttons:[{id:'go', label:'Start Weekly Flow →', kind:'primary'}],
+          onPick:launchWeeklyPrompt
+        });
+        return;
+      }
+      launchWeeklyPrompt();
     };
 
     if(isFirstWeekOfMonth(week)){
@@ -10469,7 +10504,7 @@ Required:
     if(!Array.isArray(state.ui.recentRealLifeItemsByJob[job.id])) state.ui.recentRealLifeItemsByJob[job.id] = [];
     state.ui.recentRealLifeItemsByJob[job.id].push(pair[1]);
     state.ui.recentRealLifeItemsByJob[job.id] = state.ui.recentRealLifeItemsByJob[job.id].slice(-3);
-    const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(Math.max(0, baseCost) + 3);
+    const itemName=pair[0], itemId=pair[1], baseCost=Number(pair[2] || 0), rushCost=Number(baseCost + 3);
     const haveIt = invQty(itemId) > 0;
     const bonus = !((state.ui && state.ui.forceWeeklySupplyDecision) === true) && month>=3;
 
@@ -10572,7 +10607,7 @@ Required:
     box.style.display = 'inline-flex';
     box.style.position = 'fixed';
     box.style.left = '50%';
-    box.style.top = '10vh';
+    box.style.top = '16vh';
     box.style.bottom = 'auto';
     box.style.transform = 'translateX(-50%)';
     box.style.pointerEvents = 'none';
@@ -10592,23 +10627,8 @@ Required:
   }
 
   const __prevNotifyAction2 = notifyAction;
-  function __wgltAwardWeeklyBenchmarks(action){
-    const week = Number((state.weekEngine && state.weekEngine.week) || 1);
-    const maps = {
-      weekly: [3,6,12],
-      job_event: [3,6,12],
-      transfer_savings: [1,12],
-      open_cd: [9,12],
-      deposit_check: [1,2],
-      write_check: [1,2]
-    };
-    const dynamic = week <= 4 ? [1,3] : week <= 8 ? [6,12] : [9,12];
-    const awards = (maps[action] || (action === 'next_week' ? dynamic : []));
-    awards.forEach(addCoverage);
-  }
   notifyAction = function(action){
     const res = __prevNotifyAction2.apply(this, arguments);
-    __wgltAwardWeeklyBenchmarks(action);
     const wr = state.ui && state.ui.weeklyRandom ? state.ui.weeklyRandom : null;
     const weeklyCountActions = new Set([
       'job_event','weekly','transfer_savings','open_cd','write_check','deposit_check',
@@ -10666,10 +10686,7 @@ Required:
         startWeeklyStudentFlow(()=>{
           renderAll();
           renderSheet();
-          // Do not advance the mission step yet.
-          // Week 1 should actually be played before the app moves to Week 2.
-          state.mission.waitingAction = 'job_event';
-          applyLockRules();
+          notifyAction('next_week');
         });
         return;
       }
