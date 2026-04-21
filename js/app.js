@@ -1195,8 +1195,14 @@ Takeaway: earlier choices can echo forward and change what this week feels like.
 
 /* ── Scenario choice modal builder ─────────────────────── */
 function inferScenarioFunding(opt, job){
-  if(!opt || !opt.apply) return null;
+  if(!opt) return null;
   try{
+    const labelText = `${opt.label || ''} ${opt.hint || ''}`.toLowerCase();
+    const direct = extractDollarAmountFromText(labelText);
+    if(direct > 0 && /(pay|spend|buy|help with|chip in|cover|put\s*\$|put in|put into|emergency savings|reinvest|fare|fee|charger|gas|bundle|upgrade|save\s*\$)/i.test(labelText)){
+      return { amount:Number(direct), originalSource:'pay_chain', inferred:true };
+    }
+    if(!opt.apply) return null;
     const src = opt.apply.toString();
     const patterns = [
       { kind:'cash', re:/st\.cash\s*=\s*Math\.max\(0\s*,\s*st\.cash\s*-\s*(\d+)\s*\)/ },
@@ -4832,7 +4838,7 @@ Required:
         prompt:`Use the Ledger to buy one job item for this month.
 
 Required:
-• Buy ONE or more items in the Ledger tab`,
+• Buy ONE item in the Ledger tab`,
         requireActions:["ledger_buy"]
       });
     } else {
@@ -6913,7 +6919,7 @@ function pickWeightedRandomEventType(){
 
 function getRandomEventPresentation(type){
   if(type === 'job') return { label:'💼 Job Event', buttonId:'btnJobEvent', detail:'work and reputation choices' };
-  if(type === 'financial') return { label:'⚠️ Financial Decision', buttonId:'btnSocialEvent', detail:'money pressure and protection choices' };
+  if(type === 'financial') return { label:'⚠️ Financial / Wants Decision', buttonId:'btnSocialEvent', detail:'money pressure, wants, and protection choices' };
   if(type === 'gen_local_tax') return { label:'🏛️ Generate Local Tax', buttonId:'btnGenLocalTax', detail:'tax lesson and money movement' };
   if(type === 'inheritance') return { label:'🎁 Trigger Inheritance', buttonId:'btnInheritance', detail:'windfall and account choices' };
   if(type === 'dispute') return { label:'🧾 Start Billing Dispute', buttonId:'btnDispute', detail:'billing problem and resolution choices' };
@@ -7399,18 +7405,22 @@ function runJobRealLifeEvent(afterDone){
     buttons:[
       { label:"Option A — Reinvest (+$12)", kind:"success",
         onClick:()=>{
-          state.bank.checking += 12; state.ledger.weekIncome += 12;
-          state.plan.save += 4; state.plan.needs += 1;
-          addLedgerLine(`${job.name} bonus earned: +$12 and stronger saving habit.`);
-          renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          chooseMoneyDestination(12, `${job.name}: Reinvest payout. Choose where to put or invest the $12.`, (dest)=>{
+            state.ledger.weekIncome += 12;
+            state.plan.save += 4; state.plan.needs += 1;
+            addLedgerLine(`${job.name} bonus earned: +$12 placed in ${String(dest).toUpperCase()} and stronger saving habit.`);
+            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          });
         }
       },
       { label:"Option B — Take It Easy (+$6)", kind:"secondary",
         onClick:()=>{
-          state.bank.checking += 6; state.ledger.weekIncome += 6;
-          state.plan.wants += 4;
-          addLedgerLine(`${job.name} money choice leaned toward wants.`);
-          renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          chooseMoneyDestination(6, `${job.name}: Take-it-easy payout. Choose where to put the $6.`, (dest)=>{
+            state.ledger.weekIncome += 6;
+            state.plan.wants += 4;
+            addLedgerLine(`${job.name} money choice leaned toward wants. +$6 sent to ${String(dest).toUpperCase()}.`);
+            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
+          });
         }
       }
     ]
@@ -8492,10 +8502,7 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     clearRandomEventPending();
     applyLockRules();
     generateLocalTax();
-    if(hadPending){
-      showBanner("Local tax generated. Now pay it to finish this random event.");
-      setTimeout(()=> payLocalTax(), 60);
-    }
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   $("btnPayLocalTax").onclick=()=> payLocalTax();
   $("btnInheritance").onclick=()=>{
@@ -8503,16 +8510,16 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     const hadPending = state.ui?.randomEventPendingType === "inheritance";
     clearRandomEventPending();
     applyLockRules();
-    if(hadPending) showBanner("Inheritance triggered. Choose what to do with the money to finish this random event.");
     triggerInheritance();
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   $("btnDispute").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "dispute") return;
     const hadPending = state.ui?.randomEventPendingType === "dispute";
     clearRandomEventPending();
     applyLockRules();
-    if(hadPending) showBanner("Resolve the billing dispute to finish this random event.");
     startDispute();
+    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   if($("btnJobEvent")) $("btnJobEvent").textContent = "Run Job Event";
   if($("btnSchoolEvent")) $("btnSchoolEvent").textContent = "Run Life Scenario";
@@ -9114,9 +9121,9 @@ function inferChoiceMoneyFlow(choice, promptText=''){
   const label = String((choice && choice.label) || '');
   const body = `${label} ${promptText || ''}`.toLowerCase();
   const parsed = extractDollarAmountFromText(label) || extractDollarAmountFromText(promptText);
-  const outgoingHints = /(pay|buy|cover|help with|chip in|upgrade|fare|fee|charger|gas|upkeep|bundle|bus fare|basic charger|deluxe bundle|buy now|help)/i;
+  const outgoingHints = /(pay|spend|buy|cover|help with|chip in|upgrade|fare|fee|charger|gas|upkeep|bundle|bus fare|basic charger|deluxe bundle|buy now|help|put\s*\$|put in|put into|emergency savings|save\s*\$|reinvest|convenience items)/i;
   const incomingHints = /(earn|earned|get paid|receive|refund|tip|inheritance|bonus|deposit|paid you|you got)/i;
-  const outgoing = explicitOut > 0 ? explicitOut : ((parsed > 0 && outgoingHints.test(body)) ? parsed : 0);
+  const outgoing = explicitOut > 0 ? explicitOut : ((parsed > 0 && (outgoingHints.test(body) || /^put\b/i.test(label) || /emergency fund|emergency savings|keep \$\d+ flexible/i.test(body))) ? parsed : 0);
   const incoming = explicitIn > 0 ? explicitIn : ((parsed > 0 && incomingHints.test(body) && outgoing === 0) ? parsed : 0);
   return { outgoing, incoming };
 }
@@ -10284,7 +10291,7 @@ Required:
         prompt:`Use the Ledger to buy one job item before the year begins.
 
 Required:
-• Buy ONE or more items in the Ledger tab`,
+• Buy ONE item in the Ledger tab`,
         requireActions:["ledger_buy"],
         phase:"setup",
         setupStep:6
@@ -10414,16 +10421,7 @@ Required:
     const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
     const result = __origAddCoverage.apply(this, arguments);
     if(!had){
-      const label = BENCH && BENCH[b] ? BENCH[b] : 'Coverage added';
-      openModal({
-        title:'✅ Benchmark Covered',
-        meta:`Benchmark #${b}`,
-        body:`Great work. You just covered Benchmark #${b}.
-
-What it covered:
-${label}`,
-        buttons:[{id:'ok',label:'Got it',kind:'primary'}]
-      });
+      showBanner(`Benchmark #${b} covered`);
     }
     return result;
   };
@@ -10475,7 +10473,7 @@ ${label}`,
       openModal({
         title:'📒 Month Start: Restock in Ledger',
         meta:'Required before the week continues',
-        body:'At the beginning of each month, go to the Ledger and restock one or more items for the month.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
+        body:'At the beginning of each month, go to the Ledger and restock one item for the month.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
@@ -10507,7 +10505,7 @@ ${label}`,
       openModal({
         title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
         meta:'Ledger restock for the month',
-        body:'At the beginning of each month, restock one or more items in the Ledger before running weekly events.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
+        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
