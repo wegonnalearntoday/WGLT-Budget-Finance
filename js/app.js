@@ -1196,13 +1196,16 @@ Takeaway: earlier choices can echo forward and change what this week feels like.
 /* ── Scenario choice modal builder ─────────────────────── */
 function inferScenarioFunding(opt, job){
   if(!opt) return null;
+  const directCost = typeof opt.cost === 'function' ? Number(opt.cost(job)) : Number(opt.cost || 0);
+  if(directCost > 0) return { amount:directCost, originalSource:'user_pick', inferred:false };
+  const blobs = [opt.label || '', opt.hint || '', opt.description || '', opt.body || ''].join(' | ');
+  const costMatches = [...blobs.matchAll(/\$(\d+)/g)].map(m => Number(m[1]));
+  const spendingWords = /(pay|buy|spend|help with|chip in|cover|put|add to|emergency savings|convenience|fare|bundle|charger|upkeep|reinvest|invest)/i;
+  if(costMatches.length && spendingWords.test(blobs) && !/\+\$/.test(blobs)){
+    return { amount:costMatches[0], originalSource:'user_pick', inferred:true };
+  }
+  if(!opt.apply) return null;
   try{
-    const labelText = `${opt.label || ''} ${opt.hint || ''}`.toLowerCase();
-    const direct = extractDollarAmountFromText(labelText);
-    if(direct > 0 && /(pay|spend|buy|help with|chip in|cover|put\s*\$|put in|put into|emergency savings|reinvest|fare|fee|charger|gas|bundle|upgrade|save\s*\$)/i.test(labelText)){
-      return { amount:Number(direct), originalSource:'pay_chain', inferred:true };
-    }
-    if(!opt.apply) return null;
     const src = opt.apply.toString();
     const patterns = [
       { kind:'cash', re:/st\.cash\s*=\s*Math\.max\(0\s*,\s*st\.cash\s*-\s*(\d+)\s*\)/ },
@@ -1217,25 +1220,23 @@ function inferScenarioFunding(opt, job){
       const m = src.match(p.re);
       if(m) return { amount:Number(m[1]), originalSource:p.kind, inferred:true };
     }
-    const constAmt = src.match(/const\s+amt\s*=\s*(\d+)\s*;/);
-    if(constAmt){
-      const amt = Number(constAmt[1]);
-      if(/st\.cash\s*=\s*Math\.max\(0\s*,\s*st\.cash\s*-\s*amt\s*\)|st\.cash\s*-=\s*amt/.test(src)) return { amount:amt, originalSource:'cash', inferred:true };
-      if(/st\.bank\.checking\s*=\s*Math\.max\(0\s*,\s*st\.bank\.checking\s*-\s*amt\s*\)|st\.bank\.checking\s*-=\s*amt/.test(src)) return { amount:amt, originalSource:'checking', inferred:true };
-      if(/st\.bank\.savings\s*=\s*Math\.max\(0\s*,\s*st\.bank\.savings\s*-\s*amt\s*\)|st\.bank\.savings\s*-=\s*amt/.test(src)) return { amount:amt, originalSource:'savings', inferred:true };
-      if(/addToHysa\(amt/.test(src) || /createCD\([^)]*amt/.test(src)) return { amount:amt, originalSource:'invest_only', inferred:true };
-    }
-    const investAmt = src.match(/addToHysa\((\d+)/);
-    if(investAmt) return { amount:Number(investAmt[1]), originalSource:/st\.bank\.checking\s*=|st\.bank\.checking\s*-=/ .test(src) ? 'checking' : (/st\.cash\s*=|st\.cash\s*-=/.test(src) ? 'cash' : 'invest_only'), inferred:true };
-    const cdAmt = src.match(/createCD\([^,]+,\s*(\d+)/);
-    if(cdAmt) return { amount:Number(cdAmt[1]), originalSource:'invest_only', inferred:true };
   }catch(err){}
   return null;
 }
 
 
 function inferScenarioReward(opt, job){
-  if(!opt || !opt.apply) return null;
+  if(!opt) return null;
+  const blobs = [opt.label || '', opt.hint || '', opt.description || '', opt.body || ''].join(' | ');
+  const plusMatches = [...blobs.matchAll(/\+\$(\d+)/g)].map(m => Number(m[1]));
+  if(plusMatches.length){
+    return { amount:plusMatches[0], originalDest:'user_pick', inferred:true };
+  }
+  const receiveMatch = blobs.match(/(?:receive|get|earn|inheritance).*?\$(\d+)/i);
+  if(receiveMatch){
+    return { amount:Number(receiveMatch[1]), originalDest:'user_pick', inferred:true };
+  }
+  if(!opt.apply) return null;
   try{
     const src = opt.apply.toString();
     const patterns = [
@@ -1247,19 +1248,13 @@ function inferScenarioReward(opt, job){
       const m = src.match(p.re);
       if(m) return { amount:Number(m[1]), originalDest:p.kind, inferred:true };
     }
-    const constAmt = src.match(/const\s+\w+\s*=\s*(\d+)\s*;/);
-    if(constAmt){
-      const amt = Number(constAmt[1]);
-      if(/st\.cash\s*\+=\s*\w+/.test(src)) return { amount:amt, originalDest:'cash', inferred:true };
-      if(/st\.bank\.checking\s*\+=\s*\w+/.test(src)) return { amount:amt, originalDest:'checking', inferred:true };
-      if(/st\.bank\.savings\s*\+=\s*\w+/.test(src)) return { amount:amt, originalDest:'savings', inferred:true };
-    }
   }catch(err){}
   return null;
 }
 
 function runApplyWithRewardOverride(applyFn, rewardInfo, job){
   if(!rewardInfo || !rewardInfo.amount || !rewardInfo.originalDest) return applyFn(state, job);
+  if(rewardInfo.originalDest === 'user_pick') return applyFn(state, job);
   let skipped = false;
   const targetDest = rewardInfo.originalDest;
   const targetAmount = Number(rewardInfo.amount);
@@ -1270,32 +1265,21 @@ function runApplyWithRewardOverride(applyFn, rewardInfo, job){
         const current = Number(target[prop] || 0);
         const numericValue = Number(value);
         const expected = current + targetAmount;
-        if(Number.isFinite(numericValue) && numericValue === expected){
-          skipped = true;
-          return true;
-        }
+        if(Number.isFinite(numericValue) && numericValue === expected){ skipped = true; return true; }
       }
-      target[prop] = value;
-      return true;
+      target[prop] = value; return true;
     }
   });
   const stateProxy = new Proxy(state, {
-    get(target, prop){
-      if(prop === 'bank') return bankProxy;
-      return target[prop];
-    },
+    get(target, prop){ if(prop === 'bank') return bankProxy; return target[prop]; },
     set(target, prop, value){
       if(!skipped && prop === targetDest){
         const current = Number(target[prop] || 0);
         const numericValue = Number(value);
         const expected = current + targetAmount;
-        if(Number.isFinite(numericValue) && numericValue === expected){
-          skipped = true;
-          return true;
-        }
+        if(Number.isFinite(numericValue) && numericValue === expected){ skipped = true; return true; }
       }
-      target[prop] = value;
-      return true;
+      target[prop] = value; return true;
     }
   });
   return applyFn(stateProxy, job);
@@ -1303,7 +1287,7 @@ function runApplyWithRewardOverride(applyFn, rewardInfo, job){
 
 function runApplyWithFundingOverride(applyFn, paymentInfo, job){
   if(!paymentInfo || !paymentInfo.amount || !paymentInfo.originalSource) return applyFn(state, job);
-  if(paymentInfo.originalSource === 'invest_only') return applyFn(state, job);
+  if(paymentInfo.originalSource === 'user_pick' || paymentInfo.originalSource === 'invest_only') return applyFn(state, job);
   if(paymentInfo.originalSource === 'pay_chain'){
     const originalSpendFn = payFromCheckingThenCashThenSavings;
     let spendSkipped = false;
@@ -1314,11 +1298,7 @@ function runApplyWithFundingOverride(applyFn, paymentInfo, job){
       }
       return originalSpendFn(amount);
     };
-    try{
-      return applyFn(state, job);
-    } finally {
-      payFromCheckingThenCashThenSavings = originalSpendFn;
-    }
+    try{ return applyFn(state, job); } finally { payFromCheckingThenCashThenSavings = originalSpendFn; }
   }
   let skipped = false;
   const targetSource = paymentInfo.originalSource;
@@ -1330,32 +1310,21 @@ function runApplyWithFundingOverride(applyFn, paymentInfo, job){
         const current = Number(target[prop] || 0);
         const numericValue = Number(value);
         const expected = Math.max(0, current - targetAmount);
-        if(Number.isFinite(numericValue) && numericValue === expected){
-          skipped = true;
-          return true;
-        }
+        if(Number.isFinite(numericValue) && numericValue === expected){ skipped = true; return true; }
       }
-      target[prop] = value;
-      return true;
+      target[prop] = value; return true;
     }
   });
   const stateProxy = new Proxy(state, {
-    get(target, prop){
-      if(prop === 'bank') return bankProxy;
-      return target[prop];
-    },
+    get(target, prop){ if(prop === 'bank') return bankProxy; return target[prop]; },
     set(target, prop, value){
       if(!skipped && prop === targetSource){
         const current = Number(target[prop] || 0);
         const numericValue = Number(value);
         const expected = Math.max(0, current - targetAmount);
-        if(Number.isFinite(numericValue) && numericValue === expected){
-          skipped = true;
-          return true;
-        }
+        if(Number.isFinite(numericValue) && numericValue === expected){ skipped = true; return true; }
       }
-      target[prop] = value;
-      return true;
+      target[prop] = value; return true;
     }
   });
   return applyFn(stateProxy, job);
@@ -4835,10 +4804,10 @@ Required:
       steps.push({
         title:`Month ${m}: Stock up supplies`,
         bucket:[3,1],
-        prompt:`Use the Ledger to buy one job item for this month.
+        prompt:`Use the Ledger to buy one or more job items for this month.
 
 Required:
-• Buy ONE item in the Ledger tab`,
+• Buy ONE or more items in the Ledger tab`,
         requireActions:["ledger_buy"]
       });
     } else {
@@ -6585,12 +6554,15 @@ Your balances:
 }
 
 /* Local tax */
-function generateLocalTax(){
+function generateLocalTax(forceResolve=true){
   const amount = 15 + Math.floor(Math.random()*46);
   state.localTaxDue += amount;
   addLedgerLine(`Local tax assessed: +${money(amount)} due`);
   renderAll();
   notifyAction("gen_local_tax");
+  if(forceResolve){
+    setTimeout(()=> payLocalTax(), 80);
+  }
 }
 function payLocalTax(){
   if(state.localTaxDue<=0){
@@ -6919,7 +6891,7 @@ function pickWeightedRandomEventType(){
 
 function getRandomEventPresentation(type){
   if(type === 'job') return { label:'💼 Job Event', buttonId:'btnJobEvent', detail:'work and reputation choices' };
-  if(type === 'financial') return { label:'⚠️ Financial / Wants Decision', buttonId:'btnSocialEvent', detail:'money pressure, wants, and protection choices' };
+  if(type === 'financial') return { label:'⚠️ Financial + Wants Decision', buttonId:'btnSocialEvent', detail:'money pressure, wants, and protection choices' };
   if(type === 'gen_local_tax') return { label:'🏛️ Generate Local Tax', buttonId:'btnGenLocalTax', detail:'tax lesson and money movement' };
   if(type === 'inheritance') return { label:'🎁 Trigger Inheritance', buttonId:'btnInheritance', detail:'windfall and account choices' };
   if(type === 'dispute') return { label:'🧾 Start Billing Dispute', buttonId:'btnDispute', detail:'billing problem and resolution choices' };
@@ -7405,22 +7377,18 @@ function runJobRealLifeEvent(afterDone){
     buttons:[
       { label:"Option A — Reinvest (+$12)", kind:"success",
         onClick:()=>{
-          chooseMoneyDestination(12, `${job.name}: Reinvest payout. Choose where to put or invest the $12.`, (dest)=>{
-            state.ledger.weekIncome += 12;
-            state.plan.save += 4; state.plan.needs += 1;
-            addLedgerLine(`${job.name} bonus earned: +$12 placed in ${String(dest).toUpperCase()} and stronger saving habit.`);
-            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
-          });
+          state.bank.checking += 12; state.ledger.weekIncome += 12;
+          state.plan.save += 4; state.plan.needs += 1;
+          addLedgerLine(`${job.name} bonus earned: +$12 and stronger saving habit.`);
+          renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
         }
       },
       { label:"Option B — Take It Easy (+$6)", kind:"secondary",
         onClick:()=>{
-          chooseMoneyDestination(6, `${job.name}: Take-it-easy payout. Choose where to put the $6.`, (dest)=>{
-            state.ledger.weekIncome += 6;
-            state.plan.wants += 4;
-            addLedgerLine(`${job.name} money choice leaned toward wants. +$6 sent to ${String(dest).toUpperCase()}.`);
-            renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
-          });
+          state.bank.checking += 6; state.ledger.weekIncome += 6;
+          state.plan.wants += 4;
+          addLedgerLine(`${job.name} money choice leaned toward wants.`);
+          renderAll(); notifyAction('job_event'); if(typeof afterDone === "function") setTimeout(afterDone, 120);
         }
       }
     ]
@@ -9121,9 +9089,9 @@ function inferChoiceMoneyFlow(choice, promptText=''){
   const label = String((choice && choice.label) || '');
   const body = `${label} ${promptText || ''}`.toLowerCase();
   const parsed = extractDollarAmountFromText(label) || extractDollarAmountFromText(promptText);
-  const outgoingHints = /(pay|spend|buy|cover|help with|chip in|upgrade|fare|fee|charger|gas|upkeep|bundle|bus fare|basic charger|deluxe bundle|buy now|help|put\s*\$|put in|put into|emergency savings|save\s*\$|reinvest|convenience items)/i;
+  const outgoingHints = /(pay|buy|cover|help with|chip in|upgrade|fare|fee|charger|gas|upkeep|bundle|bus fare|basic charger|deluxe bundle|buy now|help)/i;
   const incomingHints = /(earn|earned|get paid|receive|refund|tip|inheritance|bonus|deposit|paid you|you got)/i;
-  const outgoing = explicitOut > 0 ? explicitOut : ((parsed > 0 && (outgoingHints.test(body) || /^put\b/i.test(label) || /emergency fund|emergency savings|keep \$\d+ flexible/i.test(body))) ? parsed : 0);
+  const outgoing = explicitOut > 0 ? explicitOut : ((parsed > 0 && outgoingHints.test(body)) ? parsed : 0);
   const incoming = explicitIn > 0 ? explicitIn : ((parsed > 0 && incomingHints.test(body) && outgoing === 0) ? parsed : 0);
   return { outgoing, incoming };
 }
@@ -10291,7 +10259,7 @@ Required:
         prompt:`Use the Ledger to buy one job item before the year begins.
 
 Required:
-• Buy ONE item in the Ledger tab`,
+• Buy ONE or more items in the Ledger tab`,
         requireActions:["ledger_buy"],
         phase:"setup",
         setupStep:6
@@ -10473,7 +10441,7 @@ Required:
       openModal({
         title:'📒 Month Start: Restock in Ledger',
         meta:'Required before the week continues',
-        body:'At the beginning of each month, go to the Ledger and restock one item for the month.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, go to the Ledger and restock one item for the month.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
@@ -10505,7 +10473,7 @@ Required:
       openModal({
         title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
         meta:'Ledger restock for the month',
-        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
