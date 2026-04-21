@@ -2,284 +2,36 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>WGLT Student Standard Test Console</title>
-  <style>
-    :root{
-      --bg:#0f172a; --panel:#111827; --card:#1f2937; --line:#374151; --text:#f9fafb; --muted:#9ca3af;
-      --accent:#22c55e; --accent2:#3b82f6; --warn:#f59e0b; --danger:#ef4444;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
-    .wrap{display:grid;grid-template-columns:360px 1fr;min-height:100vh}
-    .side{background:var(--panel);border-right:1px solid var(--line);padding:16px;overflow:auto}
-    .main{display:flex;flex-direction:column;min-height:100vh}
-    .toolbar{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#0b1220}
-    .status{padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);background:#0b1220}
-    iframe{width:100%;height:calc(100vh - 84px);border:0;background:#fff}
-    h1{margin:0 0 12px;font-size:18px}
-    h2{margin:16px 0 8px;font-size:13px;color:#cbd5e1;text-transform:uppercase;letter-spacing:.08em}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;margin-bottom:10px}
-    .row{display:flex;gap:8px;flex-wrap:wrap}
-    button, select, input{
-      border:1px solid var(--line);background:#111827;color:var(--text);border-radius:10px;padding:9px 10px;
-      font-weight:700
-    }
-    button{cursor:pointer}
-    button.primary{background:var(--accent2)}
-    button.success{background:var(--accent)}
-    button.warn{background:var(--warn);color:#111827}
-    button.danger{background:var(--danger)}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .small{font-size:12px;color:var(--muted)}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    .pill{display:inline-block;padding:4px 8px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:#cbd5e1}
-    .log{white-space:pre-wrap;font-size:12px;line-height:1.4;color:#cbd5e1;background:#0b1220;border:1px solid var(--line);border-radius:12px;padding:10px;max-height:220px;overflow:auto}
-    .ok{color:#86efac}.bad{color:#fca5a5}
-    @media (max-width:1000px){.wrap{grid-template-columns:1fr}.side{max-height:none}}
-  </style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>WGLT Test Console (GitHub Ready)</title>
 </head>
-<body>
-  <div class="wrap">
-    <aside class="side">
-      <h1>Student Standard Test Console</h1>
-      <div class="small">Load your current app, force Student Standard, and trigger actions directly instead of waiting week by week.</div>
+<body style="margin:0;font-family:sans-serif;background:#111;color:#fff;">
+<div style="padding:10px;background:#222;">
+  <button onclick="loadApp()">Load App</button>
+  <button onclick="run('btnRandomEvent')">Run Random Event</button>
+  <button onclick="run('btnJobEvent')">Job Event</button>
+  <button onclick="run('btnGenLocalTax')">Local Tax</button>
+  <button onclick="run('btnInheritance')">Inheritance</button>
+</div>
 
-      <div class="card">
-        <h2>App Loader</h2>
-        <div class="row">
-          <input id="appPath" value="index.html" style="flex:1;min-width:140px" />
-          <button class="primary" id="loadAppBtn">Load App</button>
-        </div>
-        <div class="small" style="margin-top:8px">Use the path to your normal game page, usually <span class="mono">index.html</span>.</div>
-      </div>
-
-      <div class="card">
-        <h2>Mode + Job</h2>
-        <div class="row">
-          <button class="success" id="forceStandardBtn">Force Student Standard</button>
-          <button id="refreshStateBtn">Refresh State</button>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <select id="jobSelect">
-            <option value="lawn">Lawn Care</option>
-            <option value="pet">Pet Sitting</option>
-            <option value="babysitting">Babysitting</option>
-            <option value="dogwalk">Dog Walking</option>
-            <option value="cars">Washing Cars</option>
-            <option value="tutor">Tutoring</option>
-            <option value="chores">Household Chores</option>
-            <option value="errands">Running Errands</option>
-            <option value="crafts">Craft Sales</option>
-            <option value="lemonade">Lemonade Stand</option>
-            <option value="grocery">Grocery Worker</option>
-            <option value="cashier">Cashier</option>
-            <option value="restaurant">Restaurant Worker</option>
-            <option value="manager">Manager</option>
-            <option value="entrepreneur">Entrepreneur</option>
-            <option value="ceo">CEO</option>
-          </select>
-          <button id="setJobBtn">Set Job</button>
-          <button id="lockJobBtn">Lock Job</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Jump + Setup</h2>
-        <div class="grid">
-          <input id="weekInput" type="number" min="1" max="48" value="1" />
-          <button id="jumpWeekBtn">Jump to Week</button>
-          <button id="startMissionBtn">Start Mission</button>
-          <button id="nextWeekBtn">Next Week ▶</button>
-          <button id="openBankBtn">Banking Tab</button>
-          <button id="openLedgerBtn">Ledger Tab</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Direct Triggers</h2>
-        <div class="grid">
-          <button id="randomBtn" class="warn">Run Random Event</button>
-          <button id="jobEventBtn">Run Job Event</button>
-          <button id="lifeBtn">Run Life Scenario</button>
-          <button id="financialBtn">Run Financial Decision</button>
-          <button id="inheritBtn">Trigger Inheritance</button>
-          <button id="taxBtn">Generate Local Tax</button>
-          <button id="disputeBtn">Start Billing Dispute</button>
-          <button id="socialBtn">Run Social Decision</button>
-          <button id="schoolBtn">Run School Decision</button>
-          <button id="savingsBtn">Savings Challenge</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Benchmark / Wants Smoke Test</h2>
-        <div class="row">
-          <button id="reportsTabBtn">Reports Tab</button>
-          <button id="eventsTabBtn">Events Tab</button>
-          <button id="planTabBtn">Plan Tab</button>
-        </div>
-        <div class="small" style="margin-top:8px">Use this to quickly check whether random wants, benchmark prompts, and event wiring are appearing while you test.</div>
-      </div>
-
-      <div class="card">
-        <h2>Live State</h2>
-        <div id="liveState" class="small mono">No app loaded yet.</div>
-      </div>
-
-      <div class="card">
-        <h2>Action Log</h2>
-        <div id="log" class="log">Ready.</div>
-      </div>
-    </aside>
-
-    <section class="main">
-      <div class="toolbar">
-        <span class="pill">Target: Student Standard</span>
-        <span class="pill">Direct trigger testing</span>
-        <span class="pill">No week roulette</span>
-      </div>
-      <div class="status" id="status">Load the app to begin.</div>
-      <iframe id="appFrame" src="about:blank" title="WGLT app frame"></iframe>
-    </section>
-  </div>
+<iframe id="frame" style="width:100%;height:90vh;border:none;"></iframe>
 
 <script>
-const $ = (id)=>document.getElementById(id);
-const frame = $("appFrame");
+function loadApp(){
+  document.getElementById("frame").src = "../index.html";
+}
 
-function log(msg){
-  const box = $("log");
-  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  box.textContent = line + "\n" + box.textContent;
-}
-function setStatus(msg, good=true){
-  $("status").innerHTML = good ? `<span class="ok">${msg}</span>` : `<span class="bad">${msg}</span>`;
-}
-function getWin(){
-  return frame.contentWindow;
-}
-function getDoc(){
-  return frame.contentDocument || frame.contentWindow.document;
-}
-function safe(fn, label){
+function run(id){
+  const f = document.getElementById("frame");
   try{
-    const out = fn();
-    log(`✓ ${label}`);
-    refreshState();
-    return out;
-  }catch(err){
-    console.error(err);
-    log(`✗ ${label}: ${err.message}`);
-    setStatus(`${label} failed: ${err.message}`, false);
+    const btn = f.contentWindow.document.getElementById(id);
+    if(btn) btn.click();
+    else alert("Button not found: "+id);
+  }catch(e){
+    alert("Load app first");
   }
 }
-function clickInApp(id){
-  const d = getDoc();
-  const el = d.getElementById(id);
-  if(!el) throw new Error(`Button #${id} not found`);
-  el.click();
-}
-function clickTab(name){
-  const d = getDoc();
-  const tab = [...d.querySelectorAll('.tab')].find(t => (t.dataset.tab||'') === name);
-  if(!tab) throw new Error(`Tab ${name} not found`);
-  tab.click();
-}
-function refreshState(){
-  try{
-    const w = getWin();
-    const s = w.state || {};
-    const live = {
-      week: s?.weekEngine?.week ?? s.week ?? s.day ?? 1,
-      month: typeof w.weekToMonthName === "function" ? w.weekToMonthName(s?.weekEngine?.week ?? s.week ?? s.day ?? 1) : "?",
-      jobId: s.jobId || (s.jobs && s.jobs[s.jobIndex||0] && s.jobs[s.jobIndex||0].id) || "?",
-      experienceLevel: s.experienceLevel || "?",
-      presentationRole: s.presentationRole || "?",
-      missionActive: !!(s.mission && s.mission.active),
-      jobLocked: !!s.jobLocked,
-      planLocked: !!(s.plan && s.plan.lockedForYear),
-      localTaxDue: s.localTaxDue || 0,
-      checking: s.bank?.checking ?? 0,
-      savings: s.bank?.savings ?? 0,
-      cash: s.cash ?? 0
-    };
-    $("liveState").textContent = JSON.stringify(live, null, 2);
-  }catch(err){
-    $("liveState").textContent = "Could not read state yet.";
-  }
-}
-
-$("loadAppBtn").onclick = ()=>{
-  const path = $("appPath").value.trim() || "index.html";
-  frame.src = path;
-  setStatus(`Loading ${path}...`);
-  frame.onload = ()=>{
-    setStatus(`Loaded ${path}`);
-    log(`Loaded ${path}`);
-    setTimeout(refreshState, 500);
-  };
-};
-
-$("forceStandardBtn").onclick = ()=> safe(()=>{
-  const w = getWin();
-  const s = w.state;
-  if(!s) throw new Error("state not found");
-  s.presentationRole = "student";
-  s.experienceLevel = "standard";
-  if(typeof w.updateModeBadge === "function") w.updateModeBadge();
-  if(typeof w.renderAll === "function") w.renderAll();
-}, "Force Student Standard");
-
-$("refreshStateBtn").onclick = ()=> refreshState();
-
-$("setJobBtn").onclick = ()=> safe(()=>{
-  const w = getWin();
-  const s = w.state;
-  const wanted = $("jobSelect").value;
-  if(!Array.isArray(s.jobs)) throw new Error("state.jobs missing");
-  const idx = s.jobs.findIndex(j => j.id === wanted);
-  if(idx < 0) throw new Error(`job ${wanted} not found`);
-  s.jobIndex = idx;
-  s.jobId = wanted;
-  if(typeof w.renderAll === "function") w.renderAll();
-}, "Set job");
-
-$("lockJobBtn").onclick = ()=> safe(()=> clickInApp("btnLockJob"), "Lock job");
-$("startMissionBtn").onclick = ()=> safe(()=> clickInApp("btnStartMission"), "Start mission");
-$("nextWeekBtn").onclick = ()=> safe(()=> clickInApp("btnNextWeek"), "Next week");
-$("openBankBtn").onclick = ()=> safe(()=> clickTab("bank"), "Open Banking tab");
-$("openLedgerBtn").onclick = ()=> safe(()=> clickTab("ledger"), "Open Ledger tab");
-$("reportsTabBtn").onclick = ()=> safe(()=> clickTab("reports"), "Open Reports tab");
-$("eventsTabBtn").onclick = ()=> safe(()=> clickTab("events"), "Open Events tab");
-$("planTabBtn").onclick = ()=> safe(()=> clickTab("plan"), "Open Plan tab");
-
-$("jumpWeekBtn").onclick = ()=> safe(()=>{
-  const w = getWin();
-  const s = w.state;
-  const week = Math.max(1, Math.min(48, Number($("weekInput").value || 1)));
-  if(!s.weekEngine) s.weekEngine = {week:1,pending:[]};
-  s.weekEngine.week = week;
-  s.week = week;
-  s.day = typeof w.weekToMonth === "function" ? w.weekToMonth(week) : s.day;
-  if(typeof w.renderAll === "function") w.renderAll();
-}, "Jump to week");
-
-$("randomBtn").onclick = ()=> safe(()=> clickInApp("btnRandomEvent"), "Run Random Event");
-$("jobEventBtn").onclick = ()=> safe(()=> clickInApp("btnJobEvent"), "Run Job Event");
-$("lifeBtn").onclick = ()=> safe(()=>{
-  const w = getWin();
-  if(typeof w.runLifeScenarioDecision === "function") return w.runLifeScenarioDecision();
-  clickInApp("btnRandomEvent");
-}, "Run Life Scenario");
-$("financialBtn").onclick = ()=> safe(()=> clickInApp("btnRandomEvent"), "Run Financial Decision route");
-$("inheritBtn").onclick = ()=> safe(()=> clickInApp("btnInheritance"), "Trigger Inheritance");
-$("taxBtn").onclick = ()=> safe(()=> clickInApp("btnGenLocalTax"), "Generate Local Tax");
-$("disputeBtn").onclick = ()=> safe(()=> clickInApp("btnDispute"), "Start Billing Dispute");
-$("socialBtn").onclick = ()=> safe(()=> clickInApp("btnSocialEvent"), "Run Social Decision");
-$("schoolBtn").onclick = ()=> safe(()=> clickInApp("btnSchoolEvent"), "Run School Decision");
-$("savingsBtn").onclick = ()=> safe(()=> clickInApp("btnSavingsChallenge"), "Savings Challenge");
 </script>
 </body>
 </html>
