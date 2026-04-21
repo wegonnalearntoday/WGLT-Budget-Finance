@@ -4832,7 +4832,7 @@ Required:
         prompt:`Use the Ledger to buy one job item for this month.
 
 Required:
-• Buy ONE item in the Ledger tab`,
+• Buy ONE or more items in the Ledger tab`,
         requireActions:["ledger_buy"]
       });
     } else {
@@ -6889,12 +6889,12 @@ function runSocialDecision(){
 function pickWeightedRandomEventType(){
   if(!state.randomRun) state.randomRun = {};
   const pool = [
-    {type:"gen_local_tax", weight:15},
-    {type:"inheritance", weight:15},
+    {type:"gen_local_tax", weight:5},
+    {type:"inheritance", weight:5},
     {type:"dispute", weight:15},
-    {type:"life", weight:20},
-    {type:"job", weight:20},
-    {type:"financial", weight:15}
+    {type:"life", weight:25},
+    {type:"job", weight:30},
+    {type:"financial", weight:20}
   ];
   const total = pool.reduce((sum,item)=>sum + item.weight, 0);
   let roll = Math.random() * total;
@@ -8492,7 +8492,10 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     clearRandomEventPending();
     applyLockRules();
     generateLocalTax();
-    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
+    if(hadPending){
+      showBanner("Local tax generated. Now pay it to finish this random event.");
+      setTimeout(()=> payLocalTax(), 60);
+    }
   };
   $("btnPayLocalTax").onclick=()=> payLocalTax();
   $("btnInheritance").onclick=()=>{
@@ -8500,16 +8503,16 @@ document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>open
     const hadPending = state.ui?.randomEventPendingType === "inheritance";
     clearRandomEventPending();
     applyLockRules();
+    if(hadPending) showBanner("Inheritance triggered. Choose what to do with the money to finish this random event.");
     triggerInheritance();
-    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   $("btnDispute").onclick=()=>{
     if(state.ui?.randomEventPendingType && state.ui.randomEventPendingType !== "dispute") return;
     const hadPending = state.ui?.randomEventPendingType === "dispute";
     clearRandomEventPending();
     applyLockRules();
+    if(hadPending) showBanner("Resolve the billing dispute to finish this random event.");
     startDispute();
-    if(hadPending){ showBanner("Nice. You played the randomly selected event."); if(typeof notifyAction === "function") notifyAction("weekly"); }
   };
   if($("btnJobEvent")) $("btnJobEvent").textContent = "Run Job Event";
   if($("btnSchoolEvent")) $("btnSchoolEvent").textContent = "Run Life Scenario";
@@ -10281,7 +10284,7 @@ Required:
         prompt:`Use the Ledger to buy one job item before the year begins.
 
 Required:
-• Buy ONE item in the Ledger tab`,
+• Buy ONE or more items in the Ledger tab`,
         requireActions:["ledger_buy"],
         phase:"setup",
         setupStep:6
@@ -10411,7 +10414,16 @@ Required:
     const had = state.coverage && state.coverage.has ? state.coverage.has(b) : false;
     const result = __origAddCoverage.apply(this, arguments);
     if(!had){
-      showBanner(`Benchmark #${b} covered`);
+      const label = BENCH && BENCH[b] ? BENCH[b] : 'Coverage added';
+      openModal({
+        title:'✅ Benchmark Covered',
+        meta:`Benchmark #${b}`,
+        body:`Great work. You just covered Benchmark #${b}.
+
+What it covered:
+${label}`,
+        buttons:[{id:'ok',label:'Got it',kind:'primary'}]
+      });
     }
     return result;
   };
@@ -10463,7 +10475,7 @@ Required:
       openModal({
         title:'📒 Month Start: Restock in Ledger',
         meta:'Required before the week continues',
-        body:'At the beginning of each month, go to the Ledger and restock one item for the month.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, go to the Ledger and restock one or more items for the month.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
@@ -10495,7 +10507,7 @@ Required:
       openModal({
         title:`📒 ${weekToMonthName(week)}: Monthly Restock`,
         meta:'Ledger restock for the month',
-        body:'At the beginning of each month, restock in the Ledger before running weekly events.\n\nRequired:\n• Buy one inventory item in the Ledger tab',
+        body:'At the beginning of each month, restock one or more items in the Ledger before running weekly events.\n\nRequired:\n• Buy ONE or more items in the Ledger tab',
         buttons:[{id:'go', label:'Go to Ledger →', kind:'primary'}],
         onPick:()=>{
           openTab('ledger', {auto:true});
